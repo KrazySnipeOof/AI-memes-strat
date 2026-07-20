@@ -1,0 +1,4 @@
+requests>=2.28
+
+# Live trading only (not needed for paper mode):
+# solders>=0.20

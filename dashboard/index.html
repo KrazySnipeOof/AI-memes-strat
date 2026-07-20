@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NERV — MEMEBOT OPS</title>
+<style>
+  :root{
+    --bg:#0a0a0e; --panel:#101017; --panel2:#14141d; --line:#2a2a38;
+    --ink:#e8e8ea; --ink2:#9a9aa8; --ink3:#5c5c6c;
+    /* validated mark/status palette (dark surface) */
+    --orange:#e56300; --green:#00a869; --amber:#b37c12; --red:#ff3355; --cyan:#2695c4;
+    /* decorative neon chrome (text on near-black only) */
+    --orange-neon:#ff7a1a; --green-neon:#34ffb0; --amber-neon:#ffc233;
+    --mono:"Cascadia Mono",Consolas,"Courier New",monospace;
+    --serif:"Times New Roman",Georgia,serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:var(--bg);color:var(--ink);font-family:var(--mono);
+    font-size:14px;line-height:1.45;min-height:100vh;padding:18px 22px 40px;
+  }
+  body::after{ /* CRT scanlines */
+    content:"";position:fixed;inset:0;pointer-events:none;z-index:99;
+    background:repeating-linear-gradient(0deg,rgba(0,0,0,.16) 0 1px,transparent 1px 3px);
+  }
+  .wrap{max-width:1400px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+
+  /* ---------- header ---------- */
+  header{display:flex;align-items:stretch;gap:18px;border-bottom:2px solid var(--orange);padding-bottom:12px}
+  .nerv{display:flex;flex-direction:column;line-height:1}
+  .nerv .word{font-family:var(--serif);font-weight:900;font-size:44px;letter-spacing:2px;color:var(--red)}
+  .nerv .sub{color:var(--ink2);font-size:10px;letter-spacing:4px;margin-top:4px}
+  .title{flex:1;display:flex;flex-direction:column;justify-content:center}
+  .title h1{font-family:var(--serif);font-weight:900;font-size:24px;color:var(--orange-neon);letter-spacing:1px}
+  .title .jp{color:var(--ink2);font-size:11px;letter-spacing:6px;margin-top:4px}
+  .hstatus{display:flex;flex-direction:column;align-items:flex-end;justify-content:center;gap:6px;font-size:12px}
+  #clock{color:var(--green-neon);font-size:16px;letter-spacing:1px}
+  .badge{padding:3px 10px;border:1px solid;letter-spacing:2px;font-size:11px}
+  .badge.sim{color:var(--green-neon);border-color:var(--green)}
+  .badge.live{color:#000;background:repeating-linear-gradient(45deg,var(--amber-neon) 0 10px,#1a1a1a 10px 20px);border-color:var(--amber-neon);font-weight:bold;text-shadow:0 0 2px #fff}
+  #led{display:flex;align-items:center;gap:6px;color:var(--ink2)}
+  #led .dot{width:9px;height:9px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green)}
+  #led.bad .dot{background:var(--red);box-shadow:0 0 6px var(--red)}
+  #led.bad{color:var(--red)}
+
+  /* ---------- alert strip ---------- */
+  #alert{border:1px solid var(--line);padding:10px 16px;display:flex;align-items:center;gap:14px;
+    clip-path:polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,0 100%);background:var(--panel)}
+  #alert .pat{font-family:var(--serif);font-weight:900;font-size:18px;letter-spacing:2px}
+  #alert .msg{color:var(--ink2);font-size:12px;letter-spacing:1px}
+  #alert.blue{border-color:var(--cyan)} #alert.blue .pat{color:var(--cyan)}
+  #alert.red{border-color:var(--red);background:linear-gradient(90deg,rgba(255,51,85,.12),transparent 60%)}
+  #alert.red .pat{color:var(--red)}
+  #alert.green .pat{color:var(--green-neon)}
+  #alert.idle .pat{color:var(--ink2)}
+
+  /* ---------- panels ---------- */
+  .panel{background:var(--panel);border:1px solid var(--line);
+    clip-path:polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,0 100%)}
+  .ptab{display:flex;justify-content:space-between;align-items:center;background:var(--orange);color:#000;
+    font-size:11px;font-weight:bold;letter-spacing:2px;padding:4px 10px}
+  .ptab .verdict{font-size:11px;padding:0 6px;letter-spacing:1px}
+  .ptab .verdict.ok{background:#003b28;color:var(--green-neon)}
+  .ptab .verdict.warn{background:#3b2a00;color:var(--amber-neon)}
+  .ptab .verdict.bad{background:#3b000f;color:#ff8ba0}
+  .pbody{padding:10px 12px;font-size:12.5px}
+  .kv{display:flex;justify-content:space-between;gap:8px;padding:2.5px 0;border-bottom:1px dotted #1e1e2a}
+  .kv:last-child{border-bottom:none}
+  .kv .k{color:var(--ink3);letter-spacing:1px}
+  .kv .v{color:var(--ink);text-align:right}
+  .kv .v .usd{display:block;color:var(--ink2);font-size:11px;margin-top:1px}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  @media(max-width:980px){.grid3{grid-template-columns:1fr}}
+
+  .meter{height:10px;background:var(--panel2);border:1px solid var(--line);margin-top:6px;position:relative}
+  .meter .fill{height:100%;background:var(--green)}
+  .meter .fill.warn{background:var(--amber)} .meter .fill.crit{background:var(--red)}
+
+  /* ---------- section headings ---------- */
+  .sect{display:flex;align-items:baseline;gap:12px;margin-top:6px}
+  .sect h2{font-family:var(--serif);font-weight:900;font-size:20px;color:var(--orange-neon);letter-spacing:1px}
+  .sect .jp{color:var(--ink3);font-size:11px;letter-spacing:5px}
+
+  /* ---------- unit cards ---------- */
+  .unit .uhead{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--line)}
+  .unit .utag{color:var(--orange-neon);font-size:11px;letter-spacing:2px}
+  .unit .usym{font-weight:bold;font-size:15px;flex:1}
+  .chip{font-size:10.5px;letter-spacing:1px;padding:2px 8px;border:1px solid}
+  .chip.good{color:var(--green-neon);border-color:var(--green)}
+  .chip.warn{color:var(--amber-neon);border-color:var(--amber)}
+  .chip.crit{color:#ff8ba0;border-color:var(--red)}
+  .ubody{padding:10px 12px}
+  .sync{display:flex;align-items:baseline;justify-content:space-between}
+  .sync .lbl{color:var(--ink3);font-size:10.5px;letter-spacing:2px}
+  .sync .val{font-size:30px;font-weight:bold;letter-spacing:1px}
+  .sync .val small{font-size:14px;color:var(--ink2)}
+  .bar{height:14px;background:var(--panel2);border:1px solid var(--line);position:relative;margin:8px 0 2px}
+  .bar .fill{height:100%;background:var(--green)}
+  .bar .fill.warn{background:var(--amber)} .bar .fill.crit{background:var(--red)}
+  .bar .tick{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--ink3)}
+  .bar .tick.stop{background:var(--red)}
+  .ticklbl{display:flex;justify-content:space-between;color:var(--ink3);font-size:9.5px;letter-spacing:1px;margin-bottom:8px}
+  .spark{width:100%;height:48px;display:block}
+  .spark polyline{fill:none;stroke:var(--orange);stroke-width:2}
+  .spark circle{fill:var(--orange)}
+  .spark .spark-base, .spark line{stroke:var(--ink3);stroke-width:1;stroke-dasharray:3 3}
+  .spark-empty{height:48px;display:flex;align-items:center;justify-content:center;color:var(--ink3);
+    font-size:10.5px;letter-spacing:2px;border:1px dashed #1e1e2a}
+  .umeta{color:var(--ink2);font-size:11px;margin-top:8px;letter-spacing:.5px}
+  .umeta b{color:var(--ink)}
+  .cage{padding:26px;text-align:center;color:var(--ink2);letter-spacing:2px;font-size:13px}
+  .cage .jp{display:block;color:var(--ink3);margin-top:6px;font-size:11px;letter-spacing:6px}
+
+  /* ---------- stat tiles ---------- */
+  .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+  @media(max-width:980px){.tiles{grid-template-columns:repeat(2,1fr)}}
+  .tile{padding:12px 14px}
+  .tile .lbl{color:var(--ink3);font-size:10.5px;letter-spacing:2px}
+  .tile .big{font-size:32px;font-weight:bold;margin-top:2px}
+  .tile .big.pos{color:var(--green-neon)} .tile .big.neg{color:var(--red)}
+  .tile .sub{color:var(--ink2);font-size:11px;margin-top:2px}
+
+  /* ---------- bottom: table + terminal ---------- */
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:980px){.cols{grid-template-columns:1fr}}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th{color:var(--ink3);text-align:left;font-weight:normal;letter-spacing:2px;font-size:10.5px;
+    border-bottom:1px solid var(--line);padding:6px 8px}
+  td{padding:5px 8px;border-bottom:1px dotted #1e1e2a}
+  td.num{text-align:right}
+  td .pos{color:var(--green-neon)} td .neg{color:var(--red)}
+  .empty-row{color:var(--ink3);letter-spacing:2px;text-align:center;padding:16px}
+  #term{height:300px;overflow-y:auto;padding:10px 12px;font-size:11.5px;background:#07070b}
+  #term div{white-space:pre-wrap;word-break:break-all;color:var(--green-neon);opacity:.85}
+  #term div.warn{color:var(--amber-neon)} #term div.err{color:#ff8ba0}
+
+  footer{margin-top:10px;display:flex;justify-content:space-between;color:var(--ink3);
+    font-size:10.5px;letter-spacing:2px;border-top:1px solid var(--line);padding-top:10px}
+
+  #tip{position:fixed;display:none;background:#000;border:1px solid var(--orange);color:var(--ink);
+    padding:3px 8px;font-size:11px;pointer-events:none;z-index:100;letter-spacing:1px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="nerv">
+      <span class="word">NERV</span>
+      <span class="sub">ネルフ &nbsp;MARKET OPS</span>
+    </div>
+    <div class="title">
+      <h1>MEMEBOT COMMAND — TOKYO-3 TRADING TERMINAL</h1>
+      <div class="jp">エヴァンゲリオン・ミームコイン作戦司令部</div>
+    </div>
+    <div class="hstatus">
+      <span id="clock">--:--:--</span>
+      <span id="mode-badge" class="badge sim">SIMULATION MODE</span>
+      <span id="led"><span class="dot"></span><span id="led-txt">ESTABLISHING LINK…</span></span>
+    </div>
+  </header>
+
+  <div id="alert" class="idle">
+    <span class="pat" id="alert-pat">STANDBY</span>
+    <span class="msg" id="alert-msg">Awaiting first telemetry from MAGI…</span>
+  </div>
+
+  <div class="grid3">
+    <div class="panel">
+      <div class="ptab"><span>MAGI · MELCHIOR-1 — SCANNER</span><span class="verdict ok" id="v-mel">OK 承認</span></div>
+      <div class="pbody" id="magi-mel"></div>
+    </div>
+    <div class="panel">
+      <div class="ptab"><span>MAGI · BALTHASAR-2 — RISK</span><span class="verdict ok" id="v-bal">OK 承認</span></div>
+      <div class="pbody" id="magi-bal"></div>
+    </div>
+    <div class="panel">
+      <div class="ptab"><span>MAGI · CASPER-3 — EXECUTION</span><span class="verdict ok" id="v-cas">OK 承認</span></div>
+      <div class="pbody" id="magi-cas"></div>
+    </div>
+  </div>
+
+  <div class="sect"><h2>ACTIVE UNITS</h2><span class="jp">出撃中のエヴァ</span></div>
+  <div class="grid3" id="units"></div>
+
+  <div class="sect"><h2>SORTIE RECORD</h2><span class="jp">戦闘記録</span></div>
+  <div class="tiles" id="tiles"></div>
+
+  <div class="cols">
+    <div class="panel">
+      <div class="ptab"><span>SORTIE LOG — LAST 10 OPERATIONS</span></div>
+      <table>
+        <thead><tr><th>CLOSED (UTC)</th><th>TARGET</th><th style="text-align:right">MULT</th><th style="text-align:right">PNL (SOL)</th><th>RESULT</th></tr></thead>
+        <tbody id="sorties"></tbody>
+      </table>
+    </div>
+    <div class="panel">
+      <div class="ptab"><span>MAGI SYSTEM LOG</span><span class="verdict ok" id="v-log">LIVE</span></div>
+      <div id="term"></div>
+    </div>
+  </div>
+
+  <footer>
+    <span>GOD'S IN HIS HEAVEN. ALL'S RIGHT WITH THE WORLD.</span>
+    <span id="foot-mode">SIMULATION — NO REAL FUNDS AT RISK</span>
+  </footer>
+</div>
+<div id="tip"></div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmtSol = (v, sign) => (sign && v > 0 ? '+' : '') + v.toFixed(4);
+
+function clock(){
+  const d = new Date();
+  const p = n => String(n).padStart(2,'0');
+  $('clock').textContent =
+    `${d.getUTCFullYear()}-${p(d.getUTCMonth()+1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())} UTC`;
+}
+setInterval(clock, 1000); clock();
+
+function kv(k, v){ return `<div class="kv"><span class="k">${k}</span><span class="v">${v}</span></div>`; }
+
+function verdict(el, cls, txt){ el.className = 'verdict ' + cls; el.textContent = txt; }
+
+function statusOf(mult, stop){
+  if (mult >= 2)            return {cls:'good', txt:'▰ SYNC HIGH'};
+  if (mult >= 0.9)          return {cls:'good', txt:'▰ NOMINAL'};
+  if (mult > 1 - stop/100 + 0.1) return {cls:'warn', txt:'▲ CAUTION'};
+  return {cls:'crit', txt:'● CRITICAL'};
+}
+
+function sparkline(vals){
+  if (!vals || vals.length < 2)
+    return `<div class="spark-empty">AWAITING TELEMETRY</div>`;
+  const w = 260, h = 48, pad = 4;
+  const min = Math.min(...vals, 1), max = Math.max(...vals, 1);
+  const span = (max - min) || 1;
+  const pts = vals.map((v, i) => [
+    pad + i * (w - 2*pad) / (vals.length - 1),
+    h - pad - (v - min) * (h - 2*pad) / span
+  ]);
+  const poly = pts.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
+  const yBase = h - pad - (1 - min) * (h - 2*pad) / span;
+  const last = pts[pts.length - 1];
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" data-vals="${vals.join(',')}" preserveAspectRatio="none">
+    <line x1="${pad}" x2="${w-pad}" y1="${yBase.toFixed(1)}" y2="${yBase.toFixed(1)}"/>
+    <polyline points="${poly}"/>
+    <circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="3"/>
+  </svg>`;
+}
+
+function renderUnits(st){
+  const el = $('units');
+  if (!st.open.length){
+    el.innerHTML = `<div class="panel cage" style="grid-column:1/-1">NO ACTIVE UNITS — ALL EVA IN CAGE. SCANNER SWEEPING FOR TARGETS.<span class="jp">全機格納庫待機中</span></div>`;
+    return;
+  }
+  const hardTp = st.config.hard_tp_multiple, stop = st.config.stop_loss_pct;
+  el.innerHTML = st.open.map((p, i) => {
+    const s = statusOf(p.multiple, stop);
+    const pct = Math.max(0, Math.min(100, p.multiple / hardTp * 100));
+    const fillCls = s.cls === 'good' ? '' : s.cls === 'warn' ? 'warn' : 'crit';
+    const ticks =
+      `<div class="tick stop" style="left:${(1-stop/100)/hardTp*100}%"></div>` +
+      st.config.take_profits.map(tp => `<div class="tick" style="left:${tp.multiple/hardTp*100}%"></div>`).join('');
+    const quoteWarn = p.quote_ok ? '' : ' &nbsp;<span class="chip crit">● NO SELL QUOTE</span>';
+    return `<div class="panel unit">
+      <div class="uhead"><span class="utag">EVA UNIT-0${i}</span><span class="usym">${esc(p.symbol)}</span>
+        <span class="chip ${s.cls}">${s.txt}</span></div>
+      <div class="ubody">
+        <div class="sync"><span class="lbl">SYNC RATIO (VALUE MULTIPLE)</span>
+          <span class="val">${(p.multiple*100).toFixed(1)}<small>%</small></span></div>
+        <div class="bar"><div class="fill ${fillCls}" style="width:${pct}%"></div>${ticks}</div>
+        <div class="ticklbl"><span>0</span><span>STOP ${(1-stop/100).toFixed(2)}x</span><span>2x</span><span>3x</span><span>${hardTp}x</span></div>
+        ${sparkline(p.spark)}
+        <div class="umeta">SPENT <b>${p.spent_sol.toFixed(4)}</b> ▸ BANKED <b>${p.banked_sol.toFixed(4)}</b> ▸ NOW <b>${p.value_sol.toFixed(4)}</b> SOL<br>
+        PEAK <b>${p.peak.toFixed(2)}x</b> ▸ TP STAGE <b>${p.stage}</b> ▸ AGE <b>${Math.round(p.age_min)}m</b>${quoteWarn}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderAlert(st){
+  const a = $('alert'), pat = $('alert-pat'), msg = $('alert-msg');
+  const anyHigh = st.open.some(p => p.multiple >= 2);
+  const anyCrit = st.open.some(p => p.multiple <= 1 - st.config.stop_loss_pct/100 + 0.1 || !p.quote_ok);
+  if (anyHigh){ a.className='blue'; pat.textContent='PATTERN: BLUE';
+    msg.textContent='TARGET MULTIPLE ACHIEVED — TAKE-PROFIT LADDER ENGAGED.'; }
+  else if (anyCrit){ a.className='red'; pat.textContent='PATTERN: RED';
+    msg.textContent='UNIT NEAR STOP-LOSS THRESHOLD OR UNSELLABLE — MAGI MONITORING.'; }
+  else if (st.open.length){ a.className='green'; pat.textContent='PATTERN: GREEN';
+    msg.textContent=`${st.open.length} UNIT(S) ENGAGED — ALL PARAMETERS NOMINAL.`; }
+  else { a.className='idle'; pat.textContent='ALL CLEAR';
+    msg.textContent = st.bot_status === 'ACTIVE'
+      ? 'NO ANGELS DETECTED — SCANNER SWEEPING. FILTERS DECLINING BAD TRADES IS NORMAL.'
+      : 'MAGI STANDBY — BOT PROCESS NOT RUNNING. LAUNCH: python run.py'; }
+}
+
+function renderMagi(st){
+  const scan = st.scan;
+  $('magi-mel').innerHTML =
+    kv('SYSTEM', st.bot_status === 'ACTIVE' ? 'ACTIVE — SWEEPING' : 'STANDBY') +
+    kv('CANDIDATES', scan ? scan.candidates : '—') +
+    kv('PASSED FILTERS', scan ? scan.passed : '—') +
+    kv('DEEP-CHECKED', scan ? scan.deep : '—') +
+    kv('ENTERED', scan ? scan.entered : '—') +
+    kv('SCAN INTERVAL', st.config.scan_interval_sec + 's');
+  verdict($('v-mel'), st.bot_status === 'ACTIVE' ? 'ok' : 'warn',
+          st.bot_status === 'ACTIVE' ? 'OK 承認' : 'WAIT 待機');
+
+  const limit = st.config.daily_loss_limit_sol;
+  const used = Math.max(0, -st.realized_today_sol);
+  const frac = Math.min(1, used / limit);
+  const mCls = frac >= 0.8 ? 'crit' : frac >= 0.5 ? 'warn' : '';
+  $('magi-bal').innerHTML =
+    kv('REALIZED TODAY', fmtSol(st.realized_today_sol, true) + ' SOL') +
+    kv('LOSS BREAKER', used.toFixed(4) + ' / ' + limit.toFixed(2) + ' SOL') +
+    `<div class="meter"><div class="fill ${mCls}" style="width:${(frac*100).toFixed(0)}%"></div></div>` +
+    kv('POSITIONS', st.open.length + ' / ' + st.config.max_positions) +
+    kv('STOP LOSS', '-' + st.config.stop_loss_pct + '%') +
+    kv('TRAILING', '-' + st.config.trailing_stop_pct + '% off peak');
+  verdict($('v-bal'), frac >= 1 ? 'bad' : frac >= 0.8 ? 'warn' : 'ok',
+          frac >= 1 ? 'HALT 拒絶' : frac >= 0.8 ? 'WARN 警告' : 'OK 承認');
+
+  const tps = st.config.take_profits.map(t => t.multiple + 'x/' + Math.round(t.sell_fraction_of_remaining*100) + '%').join(' → ');
+  const w = st.wallet;
+  let balHtml = 'RPC N/A';
+  if (w && w.sol !== null && w.sol !== undefined) {
+    const usdLine = (w.usd === null || w.usd === undefined)
+      ? '<span class="usd">≈ $—</span>'
+      : `<span class="usd">≈ $${Number(w.usd).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>`;
+    balHtml = w.sol.toFixed(4) + ' SOL<br>' + usdLine;
+  }
+  $('magi-cas').innerHTML =
+    kv('MODE', st.mode === 'live' ? 'COMBAT (LIVE)' : 'SIMULATION (PAPER)') +
+    (w ? kv('PILOT WALLET', esc(w.pubkey.slice(0,4) + '…' + w.pubkey.slice(-4))) +
+         kv('BALANCE', balHtml) : '') +
+    kv('UNIT SIZE', st.config.position_size_sol + ' SOL') +
+    kv('TP LADDER', tps) +
+    kv('HARD TARGET', st.config.hard_tp_multiple + 'x') +
+    kv('TIME STOP', st.config.max_hold_min + 'm') +
+    kv('SLIPPAGE', st.config.slippage_bps + ' bps');
+  verdict($('v-cas'), st.mode === 'live' ? 'warn' : 'ok',
+          st.mode === 'live' ? 'LIVE 警告' : 'OK 承認');
+}
+
+function renderTiles(st){
+  const c = st.closed;
+  const pnlCls = v => v > 0 ? 'pos' : v < 0 ? 'neg' : '';
+  $('tiles').innerHTML =
+    `<div class="panel tile"><div class="lbl">WIN RATE</div>
+      <div class="big">${c.win_rate === null ? '—' : c.win_rate + '%'}</div>
+      <div class="sub">${c.wins} W / ${c.count - c.wins} L of ${c.count} sorties</div></div>` +
+    `<div class="panel tile"><div class="lbl">TOTAL PNL</div>
+      <div class="big ${pnlCls(c.total_pnl_sol)}">${fmtSol(c.total_pnl_sol, true)}</div>
+      <div class="sub">SOL, all closed sorties</div></div>` +
+    `<div class="panel tile"><div class="lbl">REALIZED TODAY</div>
+      <div class="big ${pnlCls(st.realized_today_sol)}">${fmtSol(st.realized_today_sol, true)}</div>
+      <div class="sub">SOL (UTC day) — breaker at -${st.config.daily_loss_limit_sol}</div></div>` +
+    `<div class="panel tile"><div class="lbl">SORTIES</div>
+      <div class="big">${c.count}</div>
+      <div class="sub">${st.open.length} unit(s) currently deployed</div></div>`;
+}
+
+function renderSorties(st){
+  const rows = st.closed.recent;
+  $('sorties').innerHTML = !rows.length
+    ? `<tr><td colspan="5" class="empty-row">NO COMPLETED SORTIES YET</td></tr>`
+    : rows.map(r => {
+        const cls = r.pnl_sol > 0 ? 'pos' : r.pnl_sol < 0 ? 'neg' : '';
+        return `<tr><td>${esc(r.closed_at || '')}</td><td>${esc(r.symbol)}</td>
+          <td class="num">${r.multiple.toFixed(2)}x</td>
+          <td class="num"><span class="${cls}">${fmtSol(r.pnl_sol, true)}</span></td>
+          <td>${esc(r.reason)}</td></tr>`;
+      }).join('');
+}
+
+function renderTerm(st){
+  const t = $('term');
+  const stick = t.scrollTop + t.clientHeight >= t.scrollHeight - 8;
+  t.innerHTML = st.log_tail.map(l => {
+    const cls = /ERROR|Traceback|CRITICAL/.test(l) ? 'err' : /WARNING/.test(l) ? 'warn' : '';
+    return `<div class="${cls}">${esc(l)}</div>`;
+  }).join('') || '<div>-- no log output yet --</div>';
+  if (stick) t.scrollTop = t.scrollHeight;
+}
+
+function render(st){
+  const live = st.mode === 'live';
+  const badge = $('mode-badge');
+  badge.className = 'badge ' + (live ? 'live' : 'sim');
+  badge.textContent = live ? '⚠ COMBAT MODE — LIVE FUNDS' : 'SIMULATION MODE — PAPER';
+  $('foot-mode').textContent = live ? '⚠ COMBAT MODE — REAL FUNDS AT RISK' : 'SIMULATION — NO REAL FUNDS AT RISK';
+  renderAlert(st); renderMagi(st); renderUnits(st); renderTiles(st); renderSorties(st); renderTerm(st);
+}
+
+async function refresh(){
+  try{
+    const r = await fetch('/api/state', {cache:'no-store'});
+    if (!r.ok) throw new Error('http ' + r.status);
+    render(await r.json());
+    $('led').className = ''; $('led-txt').textContent = 'LINK ESTABLISHED';
+  }catch(e){
+    $('led').className = 'bad'; $('led-txt').textContent = 'SIGNAL LOST — RETRYING';
+  }
+}
+refresh(); setInterval(refresh, 5000);
+
+/* sparkline hover tooltip */
+const tip = $('tip');
+document.addEventListener('mousemove', e => {
+  const svg = e.target.closest && e.target.closest('svg.spark');
+  if (!svg){ tip.style.display = 'none'; return; }
+  const vals = svg.dataset.vals.split(',').map(Number);
+  const rect = svg.getBoundingClientRect();
+  const idx = Math.max(0, Math.min(vals.length - 1,
+    Math.round((e.clientX - rect.left) / rect.width * (vals.length - 1))));
+  tip.textContent = vals[idx].toFixed(2) + 'x  (t-' + (vals.length - 1 - idx) + ')';
+  tip.style.left = (e.clientX + 14) + 'px';
+  tip.style.top = (e.clientY - 30) + 'px';
+  tip.style.display = 'block';
+});
+</script>
+</body>
+</html>
