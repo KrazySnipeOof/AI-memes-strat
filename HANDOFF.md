@@ -1,68 +1,256 @@
-# HANDOFF — solana-memebot strategy optimization session (2026-07-19)
+# HANDOFF — paper trial LIVE + Birdeye websocket pipeline (session 2026-07-23)
+
+Previous handoff preserved verbatim as `HANDOFF-base-entry-2026-07-22.md` (base-entry
+filter adoption; its Birdeye-Lite budget constraints are now VOID — see §1). The MEXC
+spec remains in `HANDOFF-mexc-2026-07-21.md` (still zero code written). Campaign
+verdicts + this session's decisions live in Claude's memory files under
+`C:\Users\kensm\.claude\projects\C--Users-kensm-memecoin-strat-v1-AI-memes-strat\memory\`
+(`memebot-paper-trial` is the newest; also `memebot-montecarlo`,
+`memebot-base-entry-filter`, `memebot-bounce-campaign`, `memebot-round4-verdict`,
+`memebot-target-rules`, `memebot-two-trees`).
+
+NOTE: a second Claude session worked this repo in parallel today (blacklist tab:
+`blcards.py`, manual-blocklist routes in `dashboard/server.py`, `backtest.py`
+blocklist-path exports, TradingView-style position drawings in `tradecards.py`).
+Its features are live and verified working; treat them as done work, not drift.
 
 ## 1. Goal
 
-Kenny asked for a new trading strategy for the Solana memecoin bot targeting **60% winrate and +100% average gain per trade** (avg 2.0x multiple), then said: **"keep optimizing until the numbers are hit, and no cheating either."** The working interpretation (stated to Kenny, not objected to): optimize honestly toward the target, and if it is not reachable without cheating, prove that and present the best honestly-achievable config instead of manufacturing numbers.
+**End goal:** a Solana memecoin strategy with real forward edge; backtests only rank
+candidates — **paper trading is the arbiter** (locked, do not relitigate).
 
-**Immediate sub-goal when session ended:** a background run of `python backtest.py --max-tokens 150` was fetching OHLCV history to grow the sample from ~49 to ~130 tokens, after which `sweep.py` gets re-run on the larger sample to confirm or overturn the round-1 conclusion (target unreachable).
+**Immediate sub-goal at session end:** the paper trial IS RUNNING (started 2026-07-23
+~11:40 UTC, 1.0 SOL account, **zero trades yet** — ~100+ rejections, which is the
+filter working). Throughput levers were pulled at 15:25 UTC; the next session's job is
+to WATCH: confirm candidate flow rose, catch the first sorties, and keep both
+processes alive. Do not touch strategy parameters while the trial accumulates.
 
-**Constraints and decisions locked this session:**
-- **No cheating, enforced in code** — Kenny explicitly demanded this. Concretely: (a) the survivor-biased `trending` cohort is EXCLUDED from the optimization objective in sweep.py (shown as reference only); (b) train/validation split of tokens, deterministic by `sha1(mint)[0] % 2`, and a config only "hits target" if it clears 60% WR AND 2.0x avg on BOTH halves; (c) conservative candle rule kept (stop checked before TP within a candle, in `backtest.simulate`); (d) 4% round-trip cost haircut kept. Do not relax any of these.
-- **No fabricated or cherry-picked numbers.** sweep.py prints a multiple-testing warning; the validation column is what counts.
-- **Round-1 verdict (25 fair tokens, 10,080 combos): ZERO combos hit the target on both halves.** Honest frontier ≈ 43–62% WR with 1.17–1.33x avg. This is preliminary due to sample size — that's why the 150-token fetch was started.
-- New strategy is named **"asym-runner"**: stop 30%, bank 50% at 1.35x (locks the trade as a net win once touched: 0.675 + 0.5·1.35·0.65 ≈ 1.11x pre-cost), trail remaining 35% off peak, hard cap 12x, max hold 480 min. It lives as backtest variant E and as `config.asym.json`.
-- `config.asym.json` uses **separate db/log** (`memebot-asym.sqlite`, `memebot-asym.log`) so paper results never mix with the main config's portfolio. Keep it that way.
+**Constraints/decisions locked this session (one-line reasoning each):**
+
+- **Paper trial parameters = backtest variant E exactly** (exits stop 40 / bank 30%
+  @1.35x / trail 30 / hard 20x / 480m; entry age ≥30m; 0.25 SOL × 3 slots; 1.0 SOL
+  start via `paper_starting_balance_sol` in `config.asym.json`). Reasoning: the trial
+  tests the validated config, nothing else.
+- **Birdeye Premium purchased 2026-07-23** (20M CU/mo, 50 RPS but 1,000 req/min
+  sustained, $9.9/1M overage, websocket 500 conns). The old "no Birdeye spend until
+  Aug 20" rule is DEAD. `bdusage.PLAN` updated; billing anchor ASSUMED day 23 —
+  **verify against the account Packages page** (open question §5).
+- **`bot/` do-not-touch rule retired** — Kenny explicitly ordered websocket wiring
+  into the bot. All additions are config-driven: `websocket.enabled:false` in
+  `config.asym.json` restores the zero-Birdeye bot byte-identically.
+- **Data architecture (Kenny-approved):** Birdeye websocket = discovery + 1m candles;
+  Birdeye REST = qualification stats; GeckoTerminal = fallback qualification +
+  backstop discovery only. Reasoning: GT's shared ~30 req/min was 429ing and losing
+  candidates; Premium gives ~30x headroom.
+- **The backtest's setup gate runs LIVE**: `backtest.entry_setup_ok()` (the exact
+  validated function) + $8k cumulative-volume floor, on websocket/backfilled candles.
+  No candle coverage from listing → no entry (backtest population always had full
+  history; entering blind would be a different strategy).
+- **Fills stay Jupiter-quoted** (real route impact, 500 bps tolerance, 0.00015 SOL/side
+  paper fee). No priority-fee/Jito-bribe modeling — documented optimism; MC edge
+  margin (36% extra cost tolerance) is the headroom argument.
+- **Throughput levers pulled, gates untouched:** WS promotions 3→10/cycle
+  (`max_promotions_per_cycle`), watchlist listing floor $2,000→$500. Off-limits
+  levers documented in the 2026-07-23 conversation: no gate loosening, no setup-filter
+  retuning (researcher freedom spent), no shorter max_hold, no lower $8k floor.
+- **Monte Carlo verdict (montecarlo.py):** path/sequencing risk negligible under the
+  backtest distribution (0 losing paths in 50k); ALL residual risk is distributional;
+  Sharpe/trade 0.37 vs Sortino/trade 7.76 (asymmetry by design); EV +56.9%/trade.
+  Risk analysis only — not evidence of live edge.
+- **Dashboard runs with `--config config.asym.json`** so MAGI/UNITS/SORTIE panels track
+  the paper bot directly. **server.py route changes require a server restart** (code
+  loads once); regenerated HTML pages (journal, montecarlo) never do.
 
 ## 2. Current state of the code
 
-**Works, verified this session:**
-- `python backtest.py --max-tokens 60` ran to completion (exit 0). Results with new variant E included:
-  - A (current config.json exits): 45 trades, 51% WR, avg 1.27x, expectancy +26.5%/trade; pump cohort 45% WR / 1.23x.
-  - E (asym-runner): 45 trades, **53% WR, avg 1.29x, +28.8%/trade** (best of the five variants); pump cohort 45% WR / 1.16x; trending 61% / 1.41x.
-  - Cohorts collected: pump 36, trending 24, **db 0** (bot's own scanner DB had no usable candidates — the only unbiased cohort is empty until the bot runs more).
-- `python sweep.py --min-train 8` ran to completion (~10,080 combos over 49 cached tokens, a couple of minutes, pure CPU after ~20s of list fetches). Output verified; full results at `reports\sweep_results.json`.
-- Per-trade journal from backtest at `reports\backtest_report.html`.
+**Running processes (detached via Start-Process — they survive session close, NOT
+reboot/sleep):**
+- Paper bot: restarted 2026-07-23 ~20:57 local (machine slept ~17:20–20:43 local —
+  trial was dark 3.4h; count EFFECTIVE runtime, not wall clock). Log
+  `memebot-asym.log`, DB `memebot-asym.sqlite` (0 positions, 0 fills). Startup lines:
+  "ws state restored: N watchlist, M candle mints" (restart continuity, see §3) then
+  "BIRDEYE WS ON ... (max 95 price subs)" then "ws connected".
+- Dashboard: `http://localhost:8700`, serving `/` `/trades` `/montecarlo` `/blacklist`
+  + `/api/state` `/api/bdusage` `/api/blacklist`. Find PIDs:
+  `netstat -ano | Select-String ":8700.*LISTENING"` and
+  `Get-CimInstance Win32_Process -Filter "Name like 'python%'" | ? { $_.CommandLine -match 'run\.py' }`.
+- Restart continuity (added ~01:00 UTC 07-24, Kenny's request): the bot resumes from
+  `reports/ws_state.json` (watchlist ages, promoted flags, candle store, counters;
+  60s snapshots + on disconnect/stop; hard kill loses ≤60s). Log appends across
+  restarts; sqlite was always persistent. Restart = just rerun the §2 commands.
 
-**In flight / incomplete:**
-- Background process `python backtest.py --max-tokens 150` (started from Claude session, task id bomkyin05) was still running at handoff. Its stdout buffers, so its output file looked empty; progress is gauged by cache file count: `(Get-ChildItem C:\Users\kensm\solana-memebot\.ohlcv_cache | Measure-Object).Count` — was 49 at handoff, should reach ~100–140 when done. If the process died with the session, just re-run `python backtest.py --max-tokens 150` — already-cached tokens are free (6h disk cache, `.ohlcv_cache\`, TTL in `backtest.py` `CACHE_TTL`), only new tokens spend rate budget (~2.2s/call, GeckoTerminal ~27 req/min).
-- The final re-sweep on the bigger sample has NOT been run yet.
-- The final verdict message to Kenny has NOT been delivered yet.
+**Verified working this session (how):**
+- Paper trial: `/api/state` → `asym.paper` = balance 1.0 SOL, 0 open/closed;
+  PAPER TRIAL panel ACTIVE with order feed, live REJECTION GATE table (55 setup /
+  34 smart-money / 12 rugcheck at last count), rejection-airlock animation (DOM-dump
+  verified), SYSTEM UPDATES changelog panel (7 rows from `reports/updates.json`).
+- Websocket: smoke tests (scratchpad) proved handshake + SOL price stream (46
+  ticks/20s); `reports/ws_status.json` shows connected/watchlist/subs/backfills;
+  promotions observed in log ("ws discovery: promoted VLAD", "... BECOON, tato").
+  Post-switch promotions log `[ws-birdeye]` source tags.
+- Birdeye REST qualification: field names verified against LIVE responses
+  (market-data: `price/liquidity/fdv/market_cap`; trade-data/single:
+  `volume_5m_usd/volume_1h_usd/buy_5m/sell_5m/price_change_5m_percent/
+  price_change_1h_percent`). End-to-end test: BONK → fully-populated Candidate →
+  correctly rejected by gates (172x fdv/liq, weak buy pressure).
+- Monte Carlo: `python montecarlo.py` regenerates byte-matching pool (220 trades,
+  83.6% WR, 1.569x = summary variant E); outputs
+  `reports/montecarlo.{json,html}` + `reports/mc_trades.json`; served at /montecarlo.
+- Trade cards: volume lanes + "At entry · no hindsight" tile panels (gate readings
+  from pre-entry candles only); regenerated via `python tradecards.py` (220 trades).
+- Blacklist tab (other session): 693 wash-ramps counted, 24 extreme cards render,
+  manual flag/restore API works; blank-screen bug was a stale server process (fixed
+  by restart — the recurring lesson).
+- Restart pickup (verified ~00:57 UTC 07-24): kill -> restart logged
+  "ws state restored: 3 watchlist, 1 candle mints (snapshot 37s old)", reconnected,
+  resumed scanning; paper balance/rejection history intact (log + sqlite persist).
 
-**Git state:** `C:\Users\kensm\solana-memebot` is **not a git repository** (`git status` → exit 128). No version control; be careful with destructive edits.
+**Broken / incomplete / caveats:**
+- **0 trades so far** — expected (strict gates, narrow pre-lever funnel). If still 0
+  after ~24h at the new settings, investigate funnel yield (see §5.1).
+- **bdusage meter over-counts the new cycle** by ~240K CU (legacy calendar-month-keyed
+  buckets attributed via `tracked_since`). Harmless direction (conservative);
+  recalibrate `reports/bd_usage_baseline.json` against Birdeye's Metrics page.
+- **Billing anchor day 23 unverified** (assumed = purchase day).
+- **Promotion is single-shot**: if BOTH Birdeye REST and GT fallback fail for a ripe
+  token, it's marked promoted and never retried. Rare now; retry queue is a possible
+  hardening (§5.3).
+- **smartmoney "no top-trader data (Birdeye unavailable); rejecting"** rejects are
+  data-availability losses, not signal verdicts — reliability lever not yet pulled.
+- Intermittent GT 429s on `trending_pools` (bot degrades gracefully to new_pools).
+- WS drops occasionally; auto-reconnect with backoff handles it (observed working).
+- Neither process survives a reboot (no Task Scheduler autostart yet).
 
-**Commands:**
-- Deps: already installed and working (Python on PATH, `requests`; bot modules import fine). No install step needed.
-- Backtest: `python C:\Users\kensm\solana-memebot\backtest.py --max-tokens 150`
-- Sweep: `python C:\Users\kensm\solana-memebot\sweep.py --min-train 20` (use `--min-train 8` only if fair sample stays small)
-- Paper-run the new strategy: `python C:\Users\kensm\solana-memebot\run.py --config config.asym.json` (paper mode is default; `--once` for single cycle; `--report` for portfolio report)
-- Both scripts `os.chdir` to the repo dir themselves; run from anywhere.
+**Git:** branch `main`, last commit `b3f8516` (initial) — EVERYTHING since is
+uncommitted, including two sessions' work. Kenny has never asked to commit; suggest it
+(§5.4).
 
-**Environment:** Windows 11, PowerShell 5.1. Note: `--report-file ""` cannot be passed from PowerShell (see Failed attempts). GeckoTerminal API needs no key. Nothing else was installed or configured this session.
+**Commands (repo root `C:\Users\kensm\memecoin-strat-v1\AI-memes-strat`):**
+- Bot: `python run.py --config config.asym.json` (detached:
+  `Start-Process -WindowStyle Hidden python -ArgumentList "run.py","--config","config.asym.json"`)
+- Dashboard: `python dashboard/server.py --config config.asym.json` (same Start-Process
+  pattern) → http://localhost:8700
+- Monte Carlo: `python montecarlo.py` (`--refresh-trades` to rebuild the pool)
+- Trade cards: `python tradecards.py` · Blacklist preview: `python blcards.py`
+- Health: `Invoke-WebRequest http://127.0.0.1:8700/api/state`; `Get-Content memebot-asym.log -Tail 20`;
+  `Get-Content reports/ws_status.json`
+- Env: Windows 11, PowerShell 5.1 + Git Bash, Python 3.11; **`websocket-client` 1.9.0
+  installed this session** (`pip install websocket-client`); `BIRDEYE_API_KEY` in `.env`.
+- Windows gotchas: kill by PID from netstat (image-name taskkill misses store-python);
+  cp1252 console (no emoji prints); headless-Edge screenshots need
+  `--virtual-time-budget` and are timing-lottery for animations — use `--dump-dom`
+  for JS-render verification; PowerShell one-liners with `\U`/quotes break — write
+  scratchpad .py files instead.
 
 ## 3. Files being actively edited
 
-- `C:\Users\kensm\solana-memebot\backtest.py` — **complete.** Added variant E "asym-runner (bank 50% @1.35x, trail 35% to 12x)" to the `variants` list in `main()` (right after variant D, with a comment explaining the 1.11x-precost lock-in math). No other changes.
-- `C:\Users\kensm\solana-memebot\sweep.py` — **new file, complete, verified working.** Exit-parameter sweep over cached OHLCV. Imports `backtest` and reuses `plain_session`, `collect_tokens`, `fetch_candles` (cache-hit path only — it skips tokens with no cache file so it never spends rate budget), and `simulate`. Grid: entry_age {10,20}, stop {25,30,35,40}, tp1_mult {1.25…2.0}, tp1_frac {0,0.3,0.5,0.6,0.75}, tp2 {none,(3.0,0.3),(4.0,0.25)}, trail {25,30,35,45}, hard {8,12,20}, hold {480} = 10,080 combos. Key functions: `token_bucket(mint)` (train/valid split), `hits(r)` (the both-halves target test), `frontier()` (Pareto extraction). Writes `reports\sweep_results.json`.
-- `C:\Users\kensm\solana-memebot\config.asym.json` — **new file, complete.** Copy of config.json with exits = asym-runner params and separate `db_path`/`log_path`. Not yet paper-traded.
-- `C:\Users\kensm\solana-memebot\reports\sweep_results.json` — generated output (round 1). Will be overwritten by the next sweep run.
+All **complete** (no mid-edit files). This session's changes:
 
-**Do NOT touch:** everything under `bot\` (working live-bot code: config.py, strategy.py, scanner.py, safety.py, execution.py, portfolio.py, main.py, etc.), `config.json` (Kenny's active paper config), `memebot.sqlite` (live paper portfolio + the future unbiased `db` cohort source), `dashboard\`.
+- `bot/birdeye_ws.py` (NEW) — `BirdeyeFeed`: WS thread (listing watchlist ≥$500 liq,
+  complex 1m price subs for opens + newest listings ≤95, candle store, auto-reconnect,
+  status file `reports/ws_status.json`), `qualify()` (Birdeye REST stats; GT fallback),
+  `setup_gate()` (entry_setup_ok + $8k cum-vol; REST backfill ≤4/cycle),
+  `promote_candidates()` (limit = `ws_max_promotions_per_cycle`). CRITICAL API facts:
+  complex SUBSCRIBE_PRICE query is a **boolean-expression STRING** (JSON arrays are
+  silently ignored); listing events **re-broadcast** (watchlist uses setdefault to keep
+  `listed_ts`/`promoted`). Late additions (~01:00 UTC 07-24): `_save_state()`/
+  `_load_state()` persistence to `reports/ws_state.json` (gated by
+  `websocket.persist_state`, default true); `setup_gate()` re-backfills when the
+  stored candle tail is >180s stale (post-restore honesty — the gate must judge
+  current candles like the backtest did; also covers the pre-existing case of a
+  non-subscribed token re-gated cycles after its one backfill); `ws_status.json`
+  writes now atomic via os.replace (a mid-write read returned blank once).
+- `bot/main.py` — feed init in `Bot.__init__`, promotions merged into `try_enter`
+  candidates, setup gate after `entry_signal` (before deep checks), `note_open_positions`
+  each cycle, `finally: feed.stop()`.
+- `bot/config.py` — `websocket` block parsing (`ws_*` attrs incl.
+  `ws_max_promotions_per_cycle`, `ws_persist_state`); raw dict kept (unknown keys safe).
+- `bot/scanner.py` — added `lookup_token()` (GT single-token pool lookup; now fallback).
+- `config.asym.json` — `paper_starting_balance_sol: 1.0`; `websocket` block
+  (enabled, promotions 10, floor $500, subs 95, backfills 4, cum-vol 8000,
+  persist_state true). Strategy values untouched.
+- `bdusage.py` — PLAN → Premium (20M/50rps/$9.9, anchor 23); CU_COST +=
+  market-data 15, trade-data/single 30 (estimates).
+- `montecarlo.py` (NEW) — MC engine + HTML report (5 scenarios × 10k paths, risk
+  section, NERV nav); reads exits from config.asym.json; pool cache
+  `reports/mc_trades.json`.
+- `tradecards.py` — volume lane in `svg_chart`, `entry_tiles()` at-entry panel,
+  MONTE CARLO nav tab (other session added position drawings + Blacklist button).
+- `dashboard/server.py` — `/montecarlo` route; `ws`/`rejects` (classifier
+  `classify_reject` matches exact verdict strings; `recent` feed)/`updates` state
+  fields; asym paper block: balance/open_rows/orders (fills⋈positions SQL). Other
+  session: `/blacklist` + `/api/blacklist` + `blcards` import.
+- `dashboard/index.html` — MONTE CARLO + BLACKLIST tabs; BIRDEYE WS row (MELCHIOR);
+  PAPER TRIAL panel: PAPER BALANCE, order feed, REJECTION GATE table; rejection
+  airlock (CSS keyframes, seen-set + queue); SYSTEM UPDATES panel. 07-24: SORTIE LOG
+  header has LIVE PAPER / BACKTEST view tabs (localStorage-sticky; auto-prefers live
+  closes before a pick) — index.html is re-read per request, no server restart needed.
+- `reports/updates.json` (NEW) — dashboard changelog; APPEND a row for every
+  meaningful future change.
+- Scratchpad (session-temp, gone next session): ws_smoke*.py, bd_fields.py, etc.
+
+**Do NOT touch:** pre-registered `loop8_eval.py`/`loop9_eval.py` (verdict authority),
+`sweep*.py`, `blocklist.py` thresholds + its `"?"-symbol guard, `.bd_cache_ext/`,
+strategy values in `config.asym.json` (`entry`/`exits` blocks + setup-filter numbers
+in `backtest.DEFAULT_SETUP`) — the trial must run unmodified. Treat `blcards.py` and
+the manual-blocklist server routes as the other session's finished work.
 
 ## 4. Failed attempts — do not repeat
 
-- **PowerShell + `--report-file ""`:** `python backtest.py --max-tokens 150 --report-file ""` failed exit 2 with verbatim error: `backtest.py: error: argument --report-file: expected one argument`. PowerShell swallows the empty string before argv. Just omit the flag (default HTML journal is harmless).
-- **Reading background-task stdout for progress:** the task output file stays empty until the Python process flushes/exits (block buffering when redirected). Dead end for monitoring — count `.ohlcv_cache` files instead.
-- **Round-1 optimization toward the target (the important one):** 10,080 exit-rule combos on 25 fair-cohort tokens (15 train / 10 valid): **zero** hit 60% WR + 2.0x avg on both halves. Best honest rows: `age20 stop40 tp1 1.5x/0% trail25` family → train 43% WR / 1.17x, valid 62% / 1.30x (n=8). The winrate↔avg trade-off is structural: tighter TP1 raises WR but caps avg; wider trail/higher cap raises avg but drops WR. The ONLY row brushing the target was trending-cohort-only (65% WR / 2.22x with hard 20x) — that cohort is survivor-biased and excluded by Kenny's no-cheating constraint. **Verdict: exit-tuning-only path to 60%/2.0x is almost certainly dead; awaiting the 150-token sample to confirm. Do not "fix" this by including trending in the objective, dropping the validation requirement, or shaving the cost haircut — that is the cheating Kenny forbade.**
-- Also note: 60% WR × 2.0x avg = +100% expectancy per compounding trade. No real strategy sustains that; treat the target as aspirational and report honest numbers.
+- **WS complex price subscription as JSON array**
+  (`{"queryType":"complex","query":[{...},{...}]}`): accepted silently, delivers
+  NOTHING — 0 PRICE_DATA in 20 min while 21 tokens were "subscribed" (only clue:
+  msgs ≈ listings + WELCOME). The same tokens via `queryType:"simple"` streamed
+  fine (46 ticks/15s). Verdict: array form dead for good; use the boolean string
+  `"(address = X AND chartType = 1m AND currency = usd) OR (...)"` (docs/gist).
+- **GeckoTerminal as primary qualification source**: 429 storms
+  (`Max retries exceeded ... /api/v2/networks/solana/trending_pools ... too many 429
+  error responses`) + single-shot promotions silently discarded ripe candidates.
+  Verdict: dead as primary; kept only as fallback + backstop discovery.
+- **Watchlist overwrite on listing events**: Birdeye re-broadcasts listings; plain
+  assignment reset the `promoted` flag → BECOON promoted twice (15:07 and 15:08).
+  Verdict: fixed via `setdefault` + max(liquidity); don't reintroduce.
+- **Trusting grep for trade counts**: `Select-String "ENTER|EXIT"` matched the word
+  "entered" in every scan line (173 false hits). Verdict: the sqlite ledger is the
+  only ground truth for trades.
+- **Headless-Edge screenshots of JS/animations**: plain `--screenshot` races the
+  first `/api/state` fetch (empty panels); `--virtual-time-budget` helps but is a
+  timing lottery for 2.8s animations. Verdict: verify dynamic DOM with `--dump-dom`
+  and grep; screenshots only for static layout.
+- **Writing Birdeye parsers from memory**: (standing repo lesson, upheld) — field
+  names were verified live before coding `qualify()`; e.g. volume is `volume_5m_usd`,
+  NOT `v5mUSD`. Keep doing this.
+- **Blacklist tab "blank white screen"**: stale server process (routes load once);
+  the disk code was fine. Verdict: any server.py change → kill PID → restart.
+  Repeated 5+ times today; it will bite again.
+- **Dashboard started WITHOUT `--config config.asym.json`** (Kenny's manual relaunch
+  after the 07-23 evening sleep/wake): it silently reads `cfg.log_path` from
+  config.json — `memebot.log`, which doesn't exist — so the rejection table went
+  blank, scan panel null, status STANDBY, while the asym bot ran fine (asym/ws/paper
+  panels kept working; they don't depend on cfg). Verdict: ALWAYS pass the flag;
+  blank rejection table + ACTIVE bot = check the dashboard's command line first.
 
 ## 5. Next steps
 
-1. **Check whether the 150-token fetch finished:** `(Get-ChildItem C:\Users\kensm\solana-memebot\.ohlcv_cache | Measure-Object).Count`. If ~49 and no `backtest.py` python process is running (`Get-Process python*`), re-run `python backtest.py --max-tokens 150` (background it; several minutes; cached tokens are free).
-2. **Re-run the sweep on the larger sample:** `python sweep.py --min-train 20`. Compare the "hitting on BOTH halves" count and the Pareto frontier against round 1 (documented above and in `reports\sweep_results.json` before it's overwritten — archive it first if you want the round-1 numbers: copy to `reports\sweep_results_round1.json`).
-3. **Deliver the verdict to Kenny.** Expected outcome (unless the frontier moves dramatically): the target is not honestly reachable by exit tuning; present the best both-halves-validated config, its real WR/avg/expectancy, and the exact gap to 60%/2.0x. Per Kenny's instructions the message must start with "Kenny" and acknowledge the prompt-optimization step (see his global CLAUDE.md).
-4. **If a config does validate well**, update `config.asym.json` exits to the winner and tell Kenny it's ready to paper-trade side-by-side: `python run.py --config config.asym.json`. The live paper A/B (main config vs asym config, separate sqlite DBs) is the honest forward-test — backtest numbers are an upper bound (fills at trigger price, no MEV/latency; entry filters only approximated by age+volume).
-5. **Entry-side selection is the one unexplored honest lever** (narrative keywords, buy/sell edge, liquidity bands cannot be reconstructed from GeckoTerminal history — see backtest.py CAVEATS). If Kenny wants to keep pushing after the verdict, the path is: let the bot run so `memebot.sqlite` accumulates candidates (the unbiased `db` cohort), then re-sweep including entry variations on that cohort.
+1. **Monitor the trial at the new settings** (the single next action): check
+   `Get-Content memebot-asym.log -Tail 30` + the dashboard. Expect: more
+   candidates/scan than the old ~39, `promoted ...[ws-birdeye]` lines, rejection
+   counts climbing faster, and eventually the first ENTER + fill in the PAPER ORDERS
+   feed. If the bot/dashboard are down (reboot), restart both (commands §2). If 0
+   trades after ~24h, diagnose WHERE candidates die (rejection-gate table proportions)
+   before touching anything — and remember the off-limits list.
+2. **Verify Birdeye billing anchor + recalibrate the meter**: Packages page → fix
+   `bdusage.PLAN["billing_anchor_day"]` if not 23; optionally align
+   `reports/bd_usage_baseline.json` with the Metrics page (~240K legacy over-count).
+3. **Remaining safe throughput levers** (in order of value): make smart-money's
+   Birdeye call reliable (Premium headroom; "no top-trader data" rejects are lost
+   trades, not verdicts); `max_deep_checks_per_cycle` 5→10; GT backstop pages 1→2-3;
+   promotion retry queue for double-failures; Task Scheduler autostart for 24/7
+   uptime (biggest trades/day lever of all).
+4. **Suggest committing** — two sessions of work sit uncommitted on `main`
+   (logical split: strategy/MC · websocket pipeline · dashboard · blacklist).
+5. **Open questions only Kenny can answer**: billing anchor day (read off Packages
+   page); commit now?; if slots start filling, raise `max_positions` 3→4 (risk
+   decision: 4×0.25 fully deploys the 1 SOL bankroll against the 0.75 daily
+   breaker); revive MEXC spec someday?
 
-**Open questions only Kenny can answer:**
-- If (as expected) 60%/+100% is confirmed unreachable without cheating: adopt the best honest config into `config.asym.json` and paper-trade it, or keep iterating on entry-side ideas?
-- Whether to put `solana-memebot` under git — it currently has no version control and this session added/modified files with no way to diff/revert.

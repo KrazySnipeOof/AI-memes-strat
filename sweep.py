@@ -31,11 +31,24 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import backtest
 from bot.config import Config
 
-FAIR_COHORTS = {"db", "pump"}
+FAIR_COHORTS = {"db", "pump", "new"}
 
 
 def token_bucket(mint: str) -> str:
     return "train" if hashlib.sha1(mint.encode()).digest()[0] % 2 == 0 else "valid"
+
+
+load_cached_candles = backtest.load_cached_candles  # canonical loader lives in backtest.py
+
+
+def load_tokens(args, cfg):
+    """Token universe: a fetcher-written index (e.g. bdfetch.py's 10k sample),
+    or live GeckoTerminal lists for cohort labels (candles still cache-only)."""
+    if args.tokens_json:
+        return backtest.load_token_index(args.tokens_json)
+    session = backtest.plain_session()
+    print("collecting token lists (for cohort labels; candles come from cache)...")
+    return backtest.collect_tokens(session, 200, cfg.db_path, 80)
 
 
 def stats(mults):
@@ -56,21 +69,20 @@ def main() -> None:
     ap.add_argument("--cost-pct", type=float, default=4)
     ap.add_argument("--min-entry-vol", type=float, default=2000)
     ap.add_argument("--min-train", type=int, default=20, help="min train-set trades to score a combo")
+    ap.add_argument("--min-valid", type=int, default=10, help="min validation trades for a combo to count as hitting")
+    ap.add_argument("--tokens-json", default="", help="token index file (e.g. reports/bd_tokens.json) instead of live lists")
+    ap.add_argument("--cache-dir", default="", help="candle cache dir (default: backtest's .ohlcv_cache)")
     ap.add_argument("--out", default=os.path.join("reports", "sweep_results.json"))
     args = ap.parse_args()
 
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
     cfg = Config.load(args.config)
-    session = backtest.plain_session()
+    cache_dir = args.cache_dir or backtest.CACHE_DIR
 
-    print("collecting token lists (for cohort labels; candles come from cache)...")
-    tokens = backtest.collect_tokens(session, 200, cfg.db_path, 80)
+    tokens = load_tokens(args, cfg)
     data = []  # (token, candles, bucket)
     for tok in tokens:
-        cpath = os.path.join(backtest.CACHE_DIR, f"{tok.pool}.json")
-        if not os.path.exists(cpath):
-            continue  # cache-only: never spend rate budget inside the sweep
-        candles, _ = backtest.fetch_candles(session, tok)
+        candles = load_cached_candles(cache_dir, tok.pool)
         if candles:
             data.append((tok, candles, token_bucket(tok.mint)))
 
@@ -130,7 +142,7 @@ def main() -> None:
     def hits(r):
         v = r["valid"]
         return (r["train"]["wr"] >= 60 and r["train"]["avg"] >= 2.0
-                and v and v["n"] >= 10 and v["wr"] >= 60 and v["avg"] >= 2.0)
+                and v and v["n"] >= args.min_valid and v["wr"] >= 60 and v["avg"] >= 2.0)
 
     def frontier(rows, key_wr, key_avg):
         rows = sorted(rows, key=lambda r: (-r["train"][key_wr], -r["train"][key_avg]))

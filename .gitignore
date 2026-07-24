@@ -1,7 +1,12 @@
 __pycache__/
 *.pyc
 .env
-memebot.sqlite
-memebot.log
+*.sqlite
+*.log
 reports/
 .ohlcv_cache/
+.bd_cache/
+.bd_cache_ext/
+.pages_deploy/
+web/node_modules/
+web/dist/

@@ -36,6 +36,11 @@ class Bot:
         self.session = make_session()
         self.db = Portfolio(cfg.db_path, cfg.mode)
         self.broker = LiveBroker(cfg, self.session) if cfg.mode == "live" else PaperBroker(cfg, self.session)
+        self.feed = None
+        if cfg.ws_enabled:
+            from .birdeye_ws import BirdeyeFeed
+            self.feed = BirdeyeFeed(cfg)
+            self.feed.start()
 
     # ------------------------------------------------------------------
     # Open-position management
@@ -112,6 +117,9 @@ class Bot:
 
         held = {p.mint for p in open_ps}
         candidates = scanner.discover(self.session, self.cfg)
+        if self.feed and self.cfg.ws_discovery:
+            candidates.extend(self.feed.promote_candidates(
+                self.session, known={c.mint for c in candidates} | held))
         self.db.record_candidates(candidates)
         if self.cfg.narrative_keywords:
             if self.cfg.narrative_require:
@@ -121,6 +129,7 @@ class Bot:
         entered = 0
         deep_checks = 0
         passed_cheap = 0
+        backfill_budget = [self.cfg.ws_max_backfills_per_cycle]
 
         for cand in candidates:
             if entered >= min(self.cfg.max_entries_per_cycle, slots):
@@ -137,6 +146,12 @@ class Bot:
             if not ok:
                 log.debug("skip %s: %s", cand.symbol, signal_why)
                 continue
+            if self.feed and self.cfg.ws_setup_filter:
+                ok, setup_why = self.feed.setup_gate(cand, self.session, backfill_budget)
+                if not ok:
+                    log.info("reject %-12s %s", cand.symbol, setup_why)
+                    continue
+                signal_why = f"{signal_why} | {setup_why}"
             passed_cheap += 1
             deep_checks += 1
 
@@ -149,18 +164,26 @@ class Bot:
                 irep = insiders.check(self.session, cand.mint, self.cfg)
                 ok, ins_why = insiders.verdict(irep, self.cfg)
                 if not ok:
-                    log.info("reject %-12s %s", cand.symbol, ins_why)
-                    time.sleep(self.cfg.api_pause_sec)
-                    continue
+                    if self.cfg.insiders_shadow:
+                        log.info("shadow %-12s would reject: %s", cand.symbol, ins_why)
+                        ins_why = f"SHADOW-FAIL insiders: {ins_why}"
+                    else:
+                        log.info("reject %-12s %s", cand.symbol, ins_why)
+                        time.sleep(self.cfg.api_pause_sec)
+                        continue
             else:
                 ins_why = "insider check disabled"
             if self.cfg.smart_money_enabled:
                 sm_rep = smartmoney.check(self.session, cand.mint, self.cfg)
                 ok, sm_why = smartmoney.verdict(sm_rep, self.cfg)
                 if not ok:
-                    log.info("reject %-12s %s", cand.symbol, sm_why)
-                    time.sleep(self.cfg.api_pause_sec)
-                    continue
+                    if self.cfg.smart_money_shadow:
+                        log.info("shadow %-12s would reject: %s", cand.symbol, sm_why)
+                        sm_why = f"SHADOW-FAIL smart-money: {sm_why}"
+                    else:
+                        log.info("reject %-12s %s", cand.symbol, sm_why)
+                        time.sleep(self.cfg.api_pause_sec)
+                        continue
             else:
                 sm_why = "smart-money check disabled"
             ok, rt_why = safety.roundtrip_check(
@@ -196,6 +219,8 @@ class Bot:
 
     # ------------------------------------------------------------------
     def cycle(self) -> None:
+        if self.feed:
+            self.feed.note_open_positions([p.mint for p in self.db.open_positions()])
         self.manage_positions()
         self.try_enter()
 
@@ -208,18 +233,25 @@ class Bot:
         )
         if self.cfg.mode != "live":
             log.info("PAPER MODE - simulated fills on live quotes, no real funds")
-        while True:
-            started = time.time()
-            try:
-                self.cycle()
-            except KeyboardInterrupt:
-                raise
-            except Exception:
-                log.exception("cycle failed; continuing")
-            if once:
-                break
-            elapsed = time.time() - started
-            time.sleep(max(1.0, self.cfg.scan_interval_sec - elapsed))
+        if self.feed:
+            log.info("BIRDEYE WS ON - listing discovery + live 1m candles + "
+                     "backtest base-entry gate (max %d price subs)", self.cfg.ws_max_price_subs)
+        try:
+            while True:
+                started = time.time()
+                try:
+                    self.cycle()
+                except KeyboardInterrupt:
+                    raise
+                except Exception:
+                    log.exception("cycle failed; continuing")
+                if once:
+                    break
+                elapsed = time.time() - started
+                time.sleep(max(1.0, self.cfg.scan_interval_sec - elapsed))
+        finally:
+            if self.feed:
+                self.feed.stop()
 
 
 def report(cfg: Config) -> None:

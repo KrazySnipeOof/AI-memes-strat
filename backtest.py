@@ -9,6 +9,8 @@ the token dies. Cohorts:
               as the bot runs)
   pump      - top pools on pump.fun / pumpswap / raydium (volume-ranked, mixed
               outcomes; moderately survivor-biased)
+  new       - recently created pools regardless of outcome (new_pools list;
+              the least survivor-biased list the API offers)
   trending  - current trending/top pools (HEAVILY survivor-biased: these are
               the tokens that made it; treat their numbers as an upper bound)
 
@@ -122,38 +124,149 @@ def _db_tokens(db_path: str) -> List[Token]:
 
 
 def collect_tokens(session, max_tokens: int, db_path: str, min_age_min: float) -> List[Token]:
+    """Enumerate as many distinct tokens as the public list endpoints allow.
+    GeckoTerminal paginates each list to ~10 pages of 20 pools, so the hard
+    enumeration ceiling is a few hundred unique tokens after dedup - thousands
+    are not reachable from these endpoints no matter what max_tokens asks for.
+
+    Fair cohorts: pump (volume-ranked, mildly biased), new (new_pools - every
+    recently created pool regardless of outcome, the least biased list), db
+    (the bot's own scanner records, unbiased). trending stays a survivor-biased
+    reference only."""
     sources = (
-        ("pump", "dexes/pump-fun/pools", (1, 2)),
-        ("pump", "dexes/pumpswap/pools", (1, 2)),
-        ("pump", "dexes/raydium/pools", (1,)),
-        ("trending", "trending_pools", (1, 2)),
-        ("trending", "pools", (1,)),
+        ("pump", "dexes/pump-fun/pools", range(1, 11)),
+        ("pump", "dexes/pumpswap/pools", range(1, 11)),
+        ("pump", "dexes/raydium/pools", range(1, 6)),
+        ("new", "new_pools", range(1, 11)),
+        ("trending", "trending_pools", range(1, 6)),
+        ("trending", "pools", range(1, 4)),
     )
-    seen, pump, trending = set(), [], []
+    seen, buckets = set(), {"pump": [], "new": [], "trending": []}
     now = time.time()
     for cohort, endpoint, pages in sources:
         for page in pages:
             r = gt_get(session, f"{GECKO}/networks/solana/{endpoint}", {"page": page})
             if r is None or r.status_code != 200:
                 print(f"  list fetch {endpoint} p{page} failed"
-                      f" ({'no response' if r is None else r.status_code})")
-                continue
-            for item in (r.json().get("data") or []):
+                      f" ({'no response' if r is None else r.status_code}); skipping rest of endpoint")
+                break
+            items = r.json().get("data") or []
+            if not items:
+                break  # past the last page
+            for item in items:
                 t = _parse_pool(item, cohort)
                 if not t or t.mint in seen:
                     continue
                 if (now - t.created_ts) / 60 < min_age_min:
                     continue  # too young to have enough history
                 seen.add(t.mint)
-                (pump if cohort == "pump" else trending).append(t)
+                buckets[cohort].append(t)
     db = [t for t in _db_tokens(db_path) if t.mint not in seen and (now - t.created_ts) / 60 >= min_age_min]
-    pump_cap = pump[: int(max_tokens * 0.6)]
-    rest_cap = (db + trending)[: max_tokens - len(pump_cap)]
-    return pump_cap + rest_cap
+    fair = db + buckets["pump"] + buckets["new"]
+    fair_cap = fair[: int(max_tokens * 0.85)]
+    trend_cap = buckets["trending"][: max_tokens - len(fair_cap)]
+    return fair_cap + trend_cap
 
 
 CACHE_DIR = ".ohlcv_cache"
 CACHE_TTL = 6 * 3600
+
+
+def load_cached_candles(cache_dir: str, pool: str):
+    """Direct cache read - no TTL, no network. Historical candles are
+    immutable, so index-driven runs (e.g. the Birdeye sample) and the sweeps
+    read cache files as-is."""
+    cpath = os.path.join(cache_dir, f"{pool}.json")
+    if not os.path.exists(cpath):
+        return None
+    try:
+        with open(cpath, "r", encoding="utf-8") as f:
+            cached = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return cached.get("candles") or None
+
+
+BLOCKLIST_PATH = os.path.join("reports", "bd_blocklist.json")
+MANUAL_BLOCKLIST_PATH = os.path.join("reports", "bd_blocklist_manual.json")
+
+
+def load_blocklist() -> dict:
+    """AUTO-detected wash-ramp tokens purged from the sample (see blocklist.py).
+    Their painted prices fabricate wins, so they are never considered again by
+    any consumer of the token index. Retroactive removal is safe here because
+    the detector is outcome-asymmetric by construction (only rising ramps -
+    fabricated wins - are ever purged). Hand-flagged charts live in a separate
+    file with forward-only semantics: see load_manual_flags()."""
+    try:
+        with open(BLOCKLIST_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def load_manual_flags() -> dict:
+    """Hand-flagged charts from the dashboard's Blacklist button
+    (reports/bd_blocklist_manual.json, reason "manual"). FORWARD-ONLY: a
+    manual flag never removes the flagged trade from existing stats - flagging
+    a known loser would otherwise inflate every downstream number (locked
+    honesty rule). It only excludes tokens LISTED AFTER the flag time whose
+    mint or symbol matches, and files the chart on the /blacklist tab as an
+    avoid-pattern reference."""
+    try:
+        with open(MANUAL_BLOCKLIST_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def _manual_cutoffs(manual: dict) -> Tuple[dict, dict]:
+    """(mint -> flag_epoch, SYMBOL -> earliest flag_epoch) for forward-only
+    exclusion. Entries with an unparseable flag time exclude nothing (never
+    retroactive by accident)."""
+    mint_ts, sym_ts = {}, {}
+    for mint, v in manual.items():
+        flagged = parse_iso(v.get("flagged_at") or "")
+        if not flagged:
+            continue
+        ts = flagged.timestamp()
+        mint_ts[mint] = ts
+        s = str(v.get("symbol") or "").strip().upper()
+        if s and s != "?":
+            sym_ts[s] = min(ts, sym_ts.get(s, ts))
+    return mint_ts, sym_ts
+
+
+def load_token_index(path: str) -> List[Token]:
+    """Tokens from a fetcher-written index (e.g. bdfetch.py's reports/bd_tokens.json).
+    Auto-blocklisted wash-ramp tokens are dropped unconditionally; manually
+    flagged charts drop only FUTURE listings (created after the flag) matching
+    the flagged mint or symbol, so hand-flagging never edits existing stats.
+    Every consumer (backtest, sweeps, tradecards, montecarlo) sees the same
+    universe."""
+    with open(path, "r", encoding="utf-8") as f:
+        raw = json.load(f)
+    blocked = load_blocklist()
+    mint_ts, sym_ts = _manual_cutoffs(load_manual_flags())
+    tokens, dropped_fwd = [], 0
+    for t in raw:
+        if t["mint"] in blocked:
+            continue
+        created = int(t["created_ts"])
+        sym = str(t.get("symbol") or "").strip().upper()
+        cut = mint_ts.get(t["mint"])
+        scut = sym_ts.get(sym)
+        if (cut is not None and created > cut) or (scut is not None and created > scut):
+            dropped_fwd += 1
+            continue
+        tokens.append(Token(mint=t["mint"], pool=t["pool"], symbol=t.get("symbol", "?"),
+                            created_ts=created, cohort=t.get("cohort", "new")))
+    if blocked:
+        print(f"token index: {len(raw) - len(tokens) - dropped_fwd} blocklisted wash-ramp tokens "
+              f"excluded ({len(tokens)} remain)")
+    if dropped_fwd:
+        print(f"token index: {dropped_fwd} post-flag listings excluded by forward-only manual flags")
+    return tokens
 
 
 def fetch_candles(session, token: Token) -> Tuple[Optional[list], int]:
@@ -192,13 +305,62 @@ def fetch_candles(session, token: Token) -> Tuple[Optional[list], int]:
     return None, 0
 
 
+# Base-entry setup filter: only take tokens that look like a consolidation
+# base at entry time — flat recent range, no collapse candle, price still near
+# its credible peak, and not mid-spike. Validated on the Birdeye sample
+# (age30/vol8k entries): baseline 1028 trades 68% WR / 1.23x avg -> filtered
+# 171 trades 81% WR / 1.54x avg, stable across both sha1 halves
+# (train 1.75x/82%, valid 1.36x/80%). All windows are time-based so the same
+# rule works on 1m and 5m candles.
+DEFAULT_SETUP = {
+    "base_window_min": 10,      # lookback for the consolidation-range check
+    "max_base_range_pct": 25.0, # (high-low) of that window, as % of entry
+    "max_nukes": 1,             # collapse candles allowed over the whole pre-entry life
+    "nuke_body": 0.70,          # close/open at or below this = collapse candle
+    "min_frac_of_peak": 0.60,   # entry must be >= this fraction of the credible peak
+    "cred_vol_usd": 500.0,      # candle volume needed to count toward the credible peak
+    "trend_window_min": 15,     # lookback for the not-chasing check
+    "trend_lo": 0.90,           # entry / close-15m-ago bounds: below = bleeding,
+    "trend_hi": 1.25,           #   above = entering mid-spike
+}
+
+
+def entry_setup_ok(pre: list, entry_ts: int, entry: float, setup: dict) -> bool:
+    """Entry-time-only check of the base-then-breakout setup on the pre-entry
+    candles. Credible peak uses the engine-v5 wash-guard (volume floor + close
+    at least half the high, peak capped at 2x close)."""
+    base = [c for c in pre if c[0] > entry_ts - setup["base_window_min"] * 60]
+    if base:
+        rng = max(c[2] for c in base) - min(c[3] for c in base)
+        if 100 * rng / entry > setup["max_base_range_pct"]:
+            return False
+    cred_peak, nukes = 0.0, 0
+    for _ts, o, h, _l, cl, v in pre:
+        if v >= setup["cred_vol_usd"] and cl >= 0.5 * h:
+            cred_peak = max(cred_peak, min(h, cl * 2))
+        if o > 0 and cl / o <= setup["nuke_body"]:
+            nukes += 1
+    if nukes > setup["max_nukes"]:
+        return False
+    if cred_peak > 0 and entry / cred_peak < setup["min_frac_of_peak"]:
+        return False
+    refs = [c[4] for c in pre if c[0] <= entry_ts - setup["trend_window_min"] * 60]
+    ref = refs[-1] if refs else pre[0][4]
+    if ref > 0 and not (setup["trend_lo"] <= entry / ref <= setup["trend_hi"]):
+        return False
+    return True
+
+
 def simulate(candles: list, exits: dict, entry_age_min: float, cost_pct: float,
-             min_entry_vol: float) -> Optional[dict]:
+             min_entry_vol: float, setup: Optional[dict] = None) -> Optional[dict]:
     """Run the exit state machine over one token's candles.
 
     Conservative candle-ambiguity rule: stops/trailing are checked against the
     candle low BEFORE take-profits are checked against its high, and the peak
     for trailing only advances after the candle is fully processed.
+
+    `setup` (e.g. DEFAULT_SETUP) additionally requires the base-entry pattern
+    at entry time; None keeps the unconditional age/volume entry.
     """
     created = candles[0][0]
     entry_ts = created + entry_age_min * 60
@@ -208,6 +370,8 @@ def simulate(candles: list, exits: dict, entry_age_min: float, cost_pct: float,
         return None
     entry = pre[-1][4]
     if entry <= 0 or sum(c[5] for c in pre) < min_entry_vol:
+        return None
+    if setup and not entry_setup_ok(pre, entry_ts, entry, setup):
         return None
 
     stop_mult = 1 - exits["stop_loss_pct"] / 100
@@ -285,11 +449,24 @@ def summarize(name: str, trades: List[Trade]) -> None:
     for t in trades:
         reasons[t.reason] = reasons.get(t.reason, 0) + 1
     print("  exits: " + ", ".join(f"{k}={v}" for k, v in sorted(reasons.items(), key=lambda x: -x[1])))
-    for cohort in ("db", "pump", "trending"):
+    for cohort in ("db", "pump", "new", "trending"):
         ct = [t.multiple for t in trades if t.cohort == cohort]
         if ct:
             cw = sum(1 for m in ct if m > 1.0)
             print(f"    [{cohort:<8}] n={len(ct):<3} wr={100 * cw / len(ct):3.0f}% avg={statistics.mean(ct):.2f}x")
+
+
+def stats_dict(mults: List[float]) -> Optional[dict]:
+    if not mults:
+        return None
+    wins = [m for m in mults if m > 1.0]
+    return {
+        "n": len(mults),
+        "wr": round(100 * len(wins) / len(mults), 1),
+        "avg": round(statistics.mean(mults), 3),
+        "median": round(statistics.median(mults), 3),
+        "expectancy_pct": round(100 * (statistics.mean(mults) - 1), 1),
+    }
 
 
 def main() -> None:
@@ -303,11 +480,19 @@ def main() -> None:
                     " for tokens whose symbol matches")
     ap.add_argument("--report-file", default=os.path.join("reports", "backtest_report.html"),
                     help="per-trade HTML journal for the D variant (empty string to skip)")
+    ap.add_argument("--no-report", action="store_true",
+                    help="skip the HTML journal (recommended for multi-thousand-token samples)")
+    ap.add_argument("--tokens-json", default="",
+                    help="token index file (e.g. reports/bd_tokens.json) instead of live GeckoTerminal lists")
+    ap.add_argument("--cache-dir", default="", help="candle cache dir (default .ohlcv_cache)")
+    ap.add_argument("--no-setup-filter", action="store_true",
+                    help="disable the base-entry setup filter and take every age/volume entry")
     args = ap.parse_args()
 
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
     cfg = Config.load(args.config)
     session = plain_session()
+    cache_dir = args.cache_dir or CACHE_DIR
 
     base_exits = {
         "stop_loss_pct": cfg.stop_loss_pct, "take_profits": cfg.take_profits,
@@ -334,43 +519,74 @@ def main() -> None:
             "take_profits": [{"multiple": 1.5, "sell_fraction_of_remaining": 0.6}],
             "hard_tp_multiple": 8.0, "trailing_stop_pct": 30, "max_hold_min": 360,
         }),
-        # E targets high winrate + high avg: TP1 at 1.35x banks enough that the
-        # trade is net-positive even if the runner half round-trips to the 35%
-        # trail (0.675 + 0.5*1.35*0.65 = 1.11x pre-cost), while the wide trail
-        # and 12x cap leave room for the outliers that drive the average.
-        ("E: asym-runner (bank 50% @1.35x, trail 35% to 12x)", {
-            "stop_loss_pct": 30,
-            "take_profits": [{"multiple": 1.35, "sell_fraction_of_remaining": 0.5}],
-            "hard_tp_multiple": 12.0, "trailing_stop_pct": 35, "max_hold_min": 480,
+        # E = the adopted asym-runner v2: best cleanly-executable config from the
+        # round-2 Birdeye sweeps (valid 81% WR / 1.65x avg with age30/vol8k entry
+        # filters). Wide 40% stop + small 30% bank at 1.35x arms a 30% trail with
+        # a 20x cap so the rare runners can pay for the losers.
+        ("E: asym-runner v2 (bank 30% @1.35x, trail 30% to 20x)", {
+            "stop_loss_pct": 40,
+            "take_profits": [{"multiple": 1.35, "sell_fraction_of_remaining": 0.3}],
+            "hard_tp_multiple": 20.0, "trailing_stop_pct": 30, "max_hold_min": 480,
         }),
     ]
 
-    min_age = args.entry_age + 60  # need at least an hour of post-entry history
-    print(f"collecting cohorts (max {args.max_tokens} tokens, min age {min_age:.0f}m)...")
-    tokens = collect_tokens(session, args.max_tokens, cfg.db_path, min_age)
+    if args.tokens_json:
+        tokens = load_token_index(args.tokens_json)
+        print(f"token index: {len(tokens)} tokens from {args.tokens_json} (cache: {cache_dir})")
+    else:
+        min_age = args.entry_age + 60  # need at least an hour of post-entry history
+        print(f"collecting cohorts (max {args.max_tokens} tokens, min age {min_age:.0f}m)...")
+        tokens = collect_tokens(session, args.max_tokens, cfg.db_path, min_age)
     counts = {}
     for t in tokens:
         counts[t.cohort] = counts.get(t.cohort, 0) + 1
     print(f"cohort sizes: {counts}")
+    setup = None if args.no_setup_filter else DEFAULT_SETUP
+    if setup:
+        print(f"base-entry setup filter ON: {setup['base_window_min']}m range <= "
+              f"{setup['max_base_range_pct']:.0f}% · nukes <= {setup['max_nukes']} · >= "
+              f"{setup['min_frac_of_peak']:.0%} of credible peak · {setup['trend_window_min']}m trend "
+              f"{setup['trend_lo']:.2f}-{setup['trend_hi']:.2f}x")
+    else:
+        print("base-entry setup filter OFF (--no-setup-filter)")
+
+    def gt_progress(phase: str, done: int, cached: int, no_data: int):
+        """Status file the NERV dashboard polls to draw its progress bar."""
+        try:
+            os.makedirs("reports", exist_ok=True)
+            with open(os.path.join("reports", "gt_progress.json"), "w", encoding="utf-8") as f:
+                json.dump({"name": "GECKOTERMINAL SAMPLE", "phase": phase, "done": done,
+                           "total": len(tokens), "cached": cached, "no_data": no_data,
+                           "updated": time.time()}, f)
+        except OSError:
+            pass
 
     results = {name: [] for name, _ in variants}
     details = {name: [] for name, _ in variants}
     skipped = 0
     for i, tok in enumerate(tokens, 1):
-        candles, cmin = fetch_candles(session, tok)
+        if args.tokens_json:
+            candles, cmin = load_cached_candles(cache_dir, tok.pool), 1
+        else:
+            candles, cmin = fetch_candles(session, tok)
         if not candles:
             skipped += 1
             continue
         entered = False
         for name, exits in variants:
-            sim = simulate(candles, exits, args.entry_age, args.cost_pct, args.min_entry_vol)
+            sim = simulate(candles, exits, args.entry_age, args.cost_pct, args.min_entry_vol, setup=setup)
             if sim:
                 entered = True
                 results[name].append(Trade(tok.symbol, tok.cohort, sim["multiple"], sim["reason"]))
-                details[name].append({"token": tok, "candles": candles, "sim": sim,
-                                      "exits": exits})
-        if i % 10 == 0:
-            print(f"  {i}/{len(tokens)} processed ({tok.symbol}, {cmin}m candles, entered={entered})")
+                if not args.no_report:
+                    details[name].append({"token": tok, "candles": candles, "sim": sim,
+                                          "exits": exits})
+        if i % 10 == 0 and not args.tokens_json:
+            print(f"  {i}/{len(tokens)} processed ({tok.symbol}, {cmin}m candles, entered={entered})",
+                  flush=True)
+            gt_progress("fetch", i, i - skipped, skipped)
+    if not args.tokens_json:
+        gt_progress("done", len(tokens), len(tokens) - skipped, skipped)
 
     print(f"\ntokens processed: {len(tokens)} | no usable history: {skipped}")
     nar_keys = [k.strip().lower() for k in args.narrative.split(",") if k.strip()]
@@ -380,7 +596,36 @@ def main() -> None:
             subset = [t for t in results[name] if any(k in t.symbol.lower() for k in nar_keys)]
             summarize(name + " -- NARRATIVE SUBSET", subset)
 
-    if args.report_file and any(details.values()):
+    # machine-readable summary (read by dashboard/server.py for the asym panel)
+    summary = {
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "sample": {"source": args.tokens_json or "geckoterminal lists",
+                   "max_tokens": args.max_tokens, "entry_age_min": args.entry_age,
+                   "cost_pct": args.cost_pct, "cohorts": counts,
+                   "tokens_processed": len(tokens) - skipped, "no_history": skipped,
+                   "setup_filter": setup},
+        "variants": [],
+    }
+    for name, exits in variants:
+        trades = results[name]
+        cohorts = {}
+        for cohort in ("db", "pump", "new", "trending"):
+            cs = stats_dict([t.multiple for t in trades if t.cohort == cohort])
+            if cs:
+                cohorts[cohort] = cs
+        summary["variants"].append({
+            "name": name, "exits": exits,
+            "overall": stats_dict([t.multiple for t in trades]),
+            "fair": stats_dict([t.multiple for t in trades if t.cohort in ("db", "pump", "new")]),
+            "cohorts": cohorts,
+        })
+    spath = os.path.join("reports", "backtest_summary.json")
+    os.makedirs("reports", exist_ok=True)
+    with open(spath, "w", encoding="utf-8") as fh:
+        json.dump(summary, fh, indent=1)
+    print(f"machine-readable summary: {os.path.abspath(spath)}")
+
+    if args.report_file and not args.no_report and any(details.values()):
         import btreport
         btreport.render_report(details, nar_keys, args.cost_pct, args.report_file)
         print(f"\nper-trade journal written: {os.path.abspath(args.report_file)}")

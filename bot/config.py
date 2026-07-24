@@ -50,6 +50,7 @@ class Config:
 
         i = raw.get("insiders", {})
         self.insiders_enabled: bool = bool(i.get("enabled", True))
+        self.insiders_shadow: bool = bool(i.get("shadow", False))
         self.try_gmgn: bool = bool(i.get("try_gmgn", True))
         self.insiders_require_data: bool = bool(i.get("require_data", True))
         self.max_insider_pct: float = float(i.get("max_insider_pct", 15))
@@ -60,6 +61,7 @@ class Config:
 
         sm = raw.get("smart_money", {})
         self.smart_money_enabled: bool = bool(sm.get("enabled", True))
+        self.smart_money_shadow: bool = bool(sm.get("shadow", False))
         self.smart_money_require: bool = bool(sm.get("require_data", False))
         self.min_top_traders: int = int(sm.get("min_top_traders", 6))
         self.max_top1_volume_share: float = float(sm.get("max_top1_volume_share", 45))
@@ -94,6 +96,20 @@ class Config:
 
         r = raw.get("risk", {})
         self.daily_loss_limit_sol: float = float(r.get("daily_loss_limit_sol", 0.75))
+
+        # Birdeye websocket feed (Premium plan) - fully opt-in; enabled: false
+        # keeps the original zero-Birdeye data path byte-identical.
+        w = raw.get("websocket", {})
+        self.ws_enabled: bool = bool(w.get("enabled", False))
+        self.ws_discovery: bool = bool(w.get("discovery", True))
+        self.ws_setup_filter: bool = bool(w.get("apply_setup_filter", True))
+        self.ws_backfill: bool = bool(w.get("backfill_rest", True))
+        self.ws_max_backfills_per_cycle: int = int(w.get("max_backfills_per_cycle", 4))
+        self.ws_max_promotions_per_cycle: int = int(w.get("max_promotions_per_cycle", 3))
+        self.ws_max_price_subs: int = int(w.get("max_price_subs", 95))
+        self.ws_min_listing_liquidity: float = float(w.get("min_listing_liquidity_usd", 2_000))
+        self.ws_min_cum_vol_usd: float = float(w.get("min_cum_vol_usd", 8_000))
+        self.ws_persist_state: bool = bool(w.get("persist_state", True))
 
     @property
     def position_size_lamports(self) -> int:

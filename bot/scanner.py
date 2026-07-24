@@ -78,6 +78,26 @@ def _parse_pool(item: dict, source: str) -> Optional[Candidate]:
         return None
 
 
+def lookup_token(session, mint: str, source: str = "ws") -> Optional[Candidate]:
+    """Single-token pool lookup for websocket-discovered mints: fills the
+    funnel stats (liquidity/fdv/vol/txns/changes) the listing stream lacks.
+    Picks the deepest pool listing this token."""
+    try:
+        r = session.get(f"{GECKO_BASE}/networks/solana/tokens/{mint}/pools",
+                        params={"page": 1}, timeout=20)
+        r.raise_for_status()
+        items = (r.json() or {}).get("data") or []
+    except Exception as exc:
+        log.debug("ws token lookup failed for %s: %s", mint, exc)
+        return None
+    best = None
+    for item in items:
+        cand = _parse_pool(item, source)
+        if cand and cand.mint == mint and (best is None or cand.liquidity_usd > best.liquidity_usd):
+            best = cand
+    return best
+
+
 def discover(session, cfg: Config) -> List[Candidate]:
     found = {}
     for source in POOL_SOURCES:
