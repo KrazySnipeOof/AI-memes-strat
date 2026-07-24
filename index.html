@@ -1,0 +1,1878 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NERV — MEMEBOT OPS</title>
+<style>
+  :root{
+    --bg:#0a0a0e; --panel:#101017; --panel2:#14141d; --line:#2a2a38;
+    --ink:#e8e8ea; --ink2:#9a9aa8; --ink3:#5c5c6c;
+    /* validated mark/status palette (dark surface) */
+    --orange:#e56300; --green:#00a869; --amber:#b37c12; --red:#ff3355; --cyan:#2695c4;
+    /* decorative neon chrome (text on near-black only) */
+    --orange-neon:#ff7a1a; --green-neon:#34ffb0; --amber-neon:#ffc233;
+    --mono:"Cascadia Mono",Consolas,"Courier New",monospace;
+    --serif:"Times New Roman",Georgia,serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:var(--bg);color:var(--ink);font-family:var(--mono);
+    font-size:14px;line-height:1.45;min-height:100vh;padding:18px 22px 40px;
+  }
+  body::after{ /* CRT scanlines */
+    content:"";position:fixed;inset:0;pointer-events:none;z-index:99;
+    background:repeating-linear-gradient(0deg,rgba(0,0,0,.16) 0 1px,transparent 1px 3px);
+  }
+  .wrap{max-width:1400px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+
+  /* ---------- header ---------- */
+  header{display:flex;align-items:stretch;gap:18px;border-bottom:2px solid var(--orange);padding-bottom:12px}
+  .nerv{display:flex;flex-direction:column;line-height:1}
+  .nerv .word{font-family:var(--serif);font-weight:900;font-size:44px;letter-spacing:2px;color:var(--red)}
+  .nerv .sub{color:var(--ink2);font-size:10px;letter-spacing:4px;margin-top:4px}
+  .title{flex:1;display:flex;flex-direction:column;justify-content:center}
+  .title h1{font-family:var(--serif);font-weight:900;font-size:24px;color:var(--orange-neon);letter-spacing:1px}
+  .title .jp{color:var(--ink2);font-size:11px;letter-spacing:6px;margin-top:4px}
+  .hstatus{display:flex;flex-direction:column;align-items:flex-end;justify-content:center;gap:6px;font-size:12px}
+  #clock{color:var(--green-neon);font-size:16px;letter-spacing:1px}
+  .badge{padding:3px 10px;border:1px solid;letter-spacing:2px;font-size:11px}
+  .badge.sim{color:var(--green-neon);border-color:var(--green)}
+  .badge.live{color:#000;background:repeating-linear-gradient(45deg,var(--amber-neon) 0 10px,#1a1a1a 10px 20px);border-color:var(--amber-neon);font-weight:bold;text-shadow:0 0 2px #fff}
+  #led{display:flex;align-items:center;gap:6px;color:var(--ink2)}
+  #led .dot{width:9px;height:9px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green)}
+  #led.bad .dot{background:var(--red);box-shadow:0 0 6px var(--red)}
+  #led.bad{color:var(--red)}
+
+  /* ---------- alert strip ---------- */
+  #alert{border:1px solid var(--line);padding:10px 16px;display:flex;align-items:center;gap:14px;
+    clip-path:polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,0 100%);background:var(--panel)}
+  #alert .pat{font-family:var(--serif);font-weight:900;font-size:18px;letter-spacing:2px}
+  #alert .msg{color:var(--ink2);font-size:12px;letter-spacing:1px}
+  #alert.blue{border-color:var(--cyan)} #alert.blue .pat{color:var(--cyan)}
+  #alert.red{border-color:var(--red);background:linear-gradient(90deg,rgba(255,51,85,.12),transparent 60%)}
+  #alert.red .pat{color:var(--red)}
+  #alert.green .pat{color:var(--green-neon)}
+  #alert.idle .pat{color:var(--ink2)}
+
+  /* ---------- panels ---------- */
+  .panel{background:var(--panel);border:1px solid var(--line);
+    clip-path:polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,0 100%)}
+  .ptab{display:flex;justify-content:space-between;align-items:center;background:var(--orange);color:#000;
+    font-size:11px;font-weight:bold;letter-spacing:2px;padding:4px 10px}
+  .ptab .verdict{font-size:11px;padding:0 6px;letter-spacing:1px}
+  .ptab .verdict.ok{background:#003b28;color:var(--green-neon)}
+  .ptab .verdict.warn{background:#3b2a00;color:var(--amber-neon)}
+  .ptab .verdict.bad{background:#3b000f;color:#ff8ba0}
+  .ptab .stab{cursor:pointer;user-select:none}
+  .ptab .stab.off{background:#1a1a1a;color:#6b6b6b}
+  .ptab.clk{cursor:pointer;user-select:none}
+  .ptab.clk:hover{background:var(--orange-neon)}
+  .ptab .caret{display:inline-block;margin-right:7px;font-size:9px;transition:transform .15s ease}
+  .panel.collapsed .pbody{display:none}
+  .panel.collapsed .ptab .caret{transform:rotate(-90deg)}
+  .pbody{padding:10px 12px;font-size:12.5px}
+  .kv{display:flex;justify-content:space-between;gap:8px;padding:2.5px 0;border-bottom:1px dotted #1e1e2a}
+  .kv:last-child{border-bottom:none}
+  .kv .k{color:var(--ink3);letter-spacing:1px}
+  .kv .v{color:var(--ink);text-align:right}
+  .kv .v .usd{display:block;color:var(--ink2);font-size:11px;margin-top:1px}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  @media(max-width:980px){.grid3{grid-template-columns:1fr}}
+
+  .meter{height:10px;background:var(--panel2);border:1px solid var(--line);margin-top:6px;position:relative}
+  .meter .fill{height:100%;background:var(--green)}
+  .meter .fill.warn{background:var(--amber)} .meter .fill.crit{background:var(--red)}
+
+  /* ---------- section headings ---------- */
+  .sect{display:flex;align-items:baseline;gap:12px;margin-top:6px}
+  .sect h2{font-family:var(--serif);font-weight:900;font-size:20px;color:var(--orange-neon);letter-spacing:1px}
+  .sect .jp{color:var(--ink3);font-size:11px;letter-spacing:5px}
+
+  /* ---------- trade detail modal ---------- */
+  tr.srow{cursor:pointer}
+  tr.srow:hover{background:#16161f}
+  tr.srow:hover .mag{color:var(--orange-neon)}
+  .mag{color:var(--ink3);font-size:10px}
+  .tmodal{display:none;position:fixed;inset:0;z-index:200;background:rgba(4,4,8,.82);
+    align-items:flex-start;justify-content:center;overflow:auto;padding:28px 16px}
+  .tcard{background:#0e0e16;border:1px solid var(--orange-neon);max-width:960px;width:100%;
+    padding:14px 16px 18px}
+  .thead{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:10px}
+  .tsym{font-size:17px;font-weight:bold;color:var(--ink);letter-spacing:1px}
+  .tclose{margin-left:auto;background:#14141d;color:var(--ink2);border:1px solid #2a2a38;
+    font-family:inherit;font-size:10.5px;letter-spacing:1px;padding:5px 12px;cursor:pointer}
+  .tclose:hover{color:var(--ink);border-color:#5c5c6c}
+  .carow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:#14141d;
+    border:1px solid #2a2a38;padding:8px 10px;margin-bottom:12px}
+  .calbl{color:var(--ink3);font-size:10px;letter-spacing:2px}
+  .caval{color:var(--amber);font-size:12px;word-break:break-all;flex:1;min-width:220px}
+  .btn2{background:#0e0e16;color:var(--ink2);border:1px solid #2a2a38;font-family:inherit;
+    font-size:10px;letter-spacing:1px;padding:5px 10px;cursor:pointer;text-decoration:none;
+    white-space:nowrap}
+  .btn2:hover{color:var(--ink);border-color:var(--cyan)}
+  .nochart{border-left:3px solid var(--amber);background:#1a1508;color:var(--ink2);
+    padding:10px 12px;font-size:11.5px;line-height:1.6;margin-bottom:12px}
+  .tgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:7px;
+    margin-top:12px}
+  .tgrid div{background:#14141d;border:1px solid #1e1e2a;padding:6px 9px}
+  .tgrid span{display:block;color:var(--ink3);font-size:9.5px;letter-spacing:1px}
+  .tgrid b{color:var(--ink);font-size:12px}
+  .tfills{width:100%;border-collapse:collapse;margin-top:12px;font-size:11px}
+  .tfills th{color:var(--ink3);font-size:9.5px;letter-spacing:1px;text-align:left;
+    border-bottom:1px solid #2a2a38;padding:4px 8px 4px 0}
+  .tfills td{padding:4px 8px 4px 0;border-bottom:1px solid #16161f;color:var(--ink2)}
+  .tload{color:var(--ink2);padding:22px;text-align:center;font-size:12px}
+  .tload.bad{color:var(--red)}
+  /* ---------- unit cards ---------- */
+  .unit .uhead{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--line)}
+  .unit .utag{color:var(--orange-neon);font-size:11px;letter-spacing:2px}
+  .unit .usym{font-weight:bold;font-size:15px;flex:1}
+  .chip{font-size:10.5px;letter-spacing:1px;padding:2px 8px;border:1px solid}
+  .chip.good{color:var(--green-neon);border-color:var(--green)}
+  .chip.warn{color:var(--amber-neon);border-color:var(--amber)}
+  .chip.crit{color:#ff8ba0;border-color:var(--red)}
+  .chip.info{color:#7ad0f0;border-color:var(--cyan)}
+  .ubody{padding:10px 12px}
+  .sync{display:flex;align-items:baseline;justify-content:space-between}
+  .sync .lbl{color:var(--ink3);font-size:10.5px;letter-spacing:2px}
+  .sync .val{font-size:30px;font-weight:bold;letter-spacing:1px}
+  .sync .val small{font-size:14px;color:var(--ink2)}
+  .sync .val.pos{color:var(--green-neon)}
+  .sync .val.neg{color:var(--red)}
+  .upnl{display:flex;align-items:flex-start;justify-content:space-between;margin-top:2px}
+  .upnl .lbl{color:var(--ink3);font-size:10.5px;letter-spacing:2px}
+  .upnl .amt{text-align:right;line-height:1.3}
+  .upnl .amt .sol{font-size:15px;font-weight:bold;letter-spacing:.5px}
+  .upnl .amt .usd{display:block;font-size:11px;opacity:.75}
+  .upnl.pos .amt{color:var(--green-neon)}
+  .upnl.neg .amt{color:var(--red)}
+  .bar{height:14px;background:var(--panel2);border:1px solid var(--line);position:relative;margin:8px 0 2px}
+  .bar .fill{height:100%;background:var(--green)}
+  .bar .fill.warn{background:var(--amber)} .bar .fill.crit{background:var(--red)}
+  .bar .tick{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--ink3)}
+  .bar .tick.stop{background:var(--red)}
+  .ticklbl{display:flex;justify-content:space-between;color:var(--ink3);font-size:9.5px;letter-spacing:1px;margin-bottom:8px}
+  .spark{width:100%;height:48px;display:block}
+  .spark polyline{fill:none;stroke:var(--orange);stroke-width:2}
+  .spark circle{fill:var(--orange)}
+  .spark .spark-base, .spark line{stroke:var(--ink3);stroke-width:1;stroke-dasharray:3 3}
+  .spark-empty{height:48px;display:flex;align-items:center;justify-content:center;color:var(--ink3);
+    font-size:10.5px;letter-spacing:2px;border:1px dashed #1e1e2a}
+  /* 1m candle minichart: up/down pair #00a869/#c81e3c is CVD-validated on this
+     surface (deutan dE 9.7); status --red stays reserved for text/alerts */
+  .chartcap{display:flex;justify-content:space-between;color:var(--ink3);font-size:9.5px;
+    letter-spacing:1px;margin-bottom:2px}
+  .candle{width:100%;height:74px;display:block}
+  .candle line{stroke-width:1;vector-effect:non-scaling-stroke}
+  .candle line.up{stroke:var(--green)} .candle line.dn{stroke:#c81e3c}
+  .candle rect.up{fill:var(--green)} .candle rect.dn{fill:#c81e3c}
+  .candle rect.vol{opacity:.45}
+  .umeta{color:var(--ink2);font-size:11px;margin-top:8px;letter-spacing:.5px}
+  .umeta b{color:var(--ink)}
+  .cage{padding:26px;text-align:center;color:var(--ink2);letter-spacing:2px;font-size:13px}
+  .cage .jp{display:block;color:var(--ink3);margin-top:6px;font-size:11px;letter-spacing:6px}
+
+  /* ---------- stat tiles ---------- */
+  /* Equal-height tiles. grid-auto-rows:1fr makes every row the same height, and
+     each tile is a column flexbox so the status strip can be pinned to the
+     bottom with margin-top:auto. Without both, a book whose stats line wraps to
+     two lines (voids, long pnl) grew taller than its neighbours and its status
+     strip floated mid-tile. */
+  .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;grid-auto-rows:1fr}
+  @media(max-width:980px){.tiles{grid-template-columns:repeat(2,1fr)}}
+  .tile{padding:12px 14px;display:flex;flex-direction:column}
+  /* one line, never wrapping: the long names (GRIND-VWAP-X) used to push the
+     ARCHIVE button onto a second row and shove the whole tile down */
+  .tile .lbl{color:var(--ink3);font-size:10.5px;letter-spacing:2px;
+    display:flex;align-items:center;gap:6px;min-width:0;white-space:nowrap}
+  .tile .lbl .slink{overflow:hidden;text-overflow:ellipsis;min-width:0}
+  .tile .lbl .archbtn{margin-left:auto;flex:none;float:none}
+  .tile .lbl .chip{flex:none}
+  .tile .big{font-size:32px;font-weight:bold;margin-top:2px}
+  .tile .big.pos{color:var(--green-neon)} .tile .big.neg{color:var(--red)}
+  /* reserve two lines so one-line and two-line books align */
+  .tile .sub{color:var(--ink2);font-size:11px;margin-top:2px;
+    min-height:2.9em;line-height:1.45}
+  /* archive control: quiet until hovered, so retiring a book is never a
+     mis-click, and the tile itself dims once the book is retired. */
+  .archbtn{float:right;font:inherit;font-size:8.5px;letter-spacing:1.5px;cursor:pointer;
+    padding:1px 5px;border:1px solid var(--ink3);background:transparent;color:var(--ink3);
+    border-radius:2px;opacity:.55;transition:opacity .12s,color .12s,border-color .12s}
+  .archbtn:hover{opacity:1;color:var(--red);border-color:var(--red)}
+  .archbtn:disabled{cursor:default;opacity:.35}
+  .slink{color:inherit;text-decoration:none;border-bottom:1px dotted var(--ink3)}
+  .slink:hover{color:var(--amber);border-bottom-color:var(--amber)}
+  /* per-bot status strip, sits under the tile body like a footer tab */
+  .stab{display:flex;align-items:center;gap:6px;margin:9px -14px -12px;padding:5px 14px;
+    border-top:1px solid #2a2a38;background:#12121a;font-size:9.5px;letter-spacing:1.5px;
+    margin-top:auto}   /* pin to the bottom of the flex column, so every strip lines up */
+  .stab .dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex:none;
+    box-shadow:0 0 5px currentColor}
+  .stab .txt{font-weight:bold}
+  .stab .det{margin-left:auto;color:var(--ink3);letter-spacing:0;font-size:9.5px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .stab .restarts{color:var(--amber);letter-spacing:0}
+  .stab.ok{color:var(--green-neon)}
+  .stab.warn{color:var(--amber)}
+  .stab.down{color:var(--red)}
+  .stab.off,.stab.unk{color:var(--ink3)}
+  .stab.ok .dot{animation:pulse 2s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .tile.archived{opacity:.5;border-style:dashed}
+  .tile.archived .archbtn:hover{color:var(--green-neon);border-color:var(--green-neon)}
+  /* per-strategy balance controls */
+  .balacts{display:flex;gap:6px;margin-top:5px;flex-wrap:wrap}
+  .balbtn{font:inherit;font-size:8.5px;letter-spacing:1.5px;cursor:pointer;
+    padding:1px 5px;border:1px solid var(--ink3);background:transparent;color:var(--ink3);
+    border-radius:2px;opacity:.55;transition:opacity .12s,color .12s,border-color .12s}
+  .balbtn:hover{opacity:1;color:var(--amber);border-color:var(--amber)}
+  .balbtn-reset:hover{color:var(--red);border-color:var(--red)}
+  .balbtn:disabled{cursor:default;opacity:.35}
+
+  /* ---------- bottom: table + terminal ---------- */
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:980px){.cols{grid-template-columns:1fr}}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th{color:var(--ink3);text-align:left;font-weight:normal;letter-spacing:2px;font-size:10.5px;
+    border-bottom:1px solid var(--line);padding:6px 8px}
+  td{padding:5px 8px;border-bottom:1px dotted #1e1e2a}
+  td.num{text-align:right}
+  td .pos{color:var(--green-neon)} td .neg{color:var(--red)}
+  .empty-row{color:var(--ink3);letter-spacing:2px;text-align:center;padding:16px}
+  #term{height:300px;overflow-y:auto;padding:10px 12px;font-size:11.5px;background:#07070b}
+  #term div{white-space:pre-wrap;word-break:break-all;color:var(--green-neon);opacity:.85}
+  #term div.warn{color:var(--amber-neon)} #term div.err{color:#ff8ba0}
+
+  footer{margin-top:10px;display:flex;justify-content:space-between;color:var(--ink3);
+    font-size:10.5px;letter-spacing:2px;border-top:1px solid var(--line);padding-top:10px}
+
+  #tip{position:fixed;display:none;background:#000;border:1px solid var(--orange);color:var(--ink);
+    padding:3px 8px;font-size:11px;pointer-events:none;z-index:100;letter-spacing:1px}
+
+  /* ---------- rejection airlock (live reject animation) ---------- */
+  /* one lane per live strategy: chips fly their own lane into the gate line */
+  #rejfx{position:relative;height:118px;overflow:hidden;background:var(--panel)}
+  #rejfx::after{content:"";position:absolute;left:58%;top:5px;bottom:5px;
+    border-left:2px dashed var(--red);opacity:.5}
+  #rejfx .gatelbl{position:absolute;left:calc(58% + 8px);top:6px;color:var(--red);
+    font-size:9px;letter-spacing:3px;opacity:.7}
+  #rejrail{position:absolute;left:0;top:0;bottom:0;width:76px;
+    border-right:1px solid var(--line);background:rgba(0,0,0,.25)}
+  #rejrail .lane{position:absolute;left:8px;font-size:9px;letter-spacing:1.5px;white-space:nowrap}
+  #rejrail .lane i{display:block;font-style:normal;color:var(--ink3);
+    font-size:8.5px;letter-spacing:1px;margin-top:1px}
+  #rejempty{position:absolute;left:96px;top:48%;color:var(--ink3);font-size:10.5px;letter-spacing:2px}
+  /* one strategy colour, reused by the lane label, the flying chip and the ticker */
+  .sc-base{--sc:var(--green-neon)} .sc-bounce{--sc:var(--amber-neon)}
+  .sc-holder{--sc:#7ad0f0} .sc-homerun{--sc:#c39bff} .sc-other{--sc:var(--ink2)}
+  #rejrail .lane, #rejtick .rt .s, #rejtick .hdr .tg{color:var(--sc)}
+  .rchip{--d:200px;--sc:var(--cyan);position:absolute;left:84px;display:inline-flex;
+    align-items:center;gap:7px;padding:4px 10px;background:var(--panel2);border:1px solid var(--sc);
+    font-size:11.5px;white-space:nowrap;will-change:transform,opacity;
+    animation:rchip-run 2.8s cubic-bezier(.25,.6,.3,1) forwards}
+  .rchip b{letter-spacing:.5px}
+  .rchip .rstrat{color:var(--sc);font-size:9px;letter-spacing:1.5px}
+  .rchip .rgate{color:var(--ink3);font-size:9.5px;letter-spacing:1px}
+
+  /* persistent ticker under the stage — the airlock is empty between events */
+  #rejtick{border-top:1px solid var(--line);padding:7px 11px 9px;background:var(--panel)}
+  #rejtick .hdr{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;
+    color:var(--ink3);letter-spacing:2px;font-size:10px;margin-bottom:4px}
+  #rejtick .rt{display:flex;gap:9px;align-items:baseline;font-size:11.5px;
+    padding:2.5px 0;border-bottom:1px dotted #1e1e2a}
+  #rejtick .rt:last-child{border-bottom:none}
+  #rejtick .rt .t{color:var(--ink3);font-size:10px;white-space:nowrap}
+  #rejtick .rt .s{flex:0 0 62px;font-size:9px;letter-spacing:1.5px}
+  #rejtick .rt .sym{flex:0 0 116px;font-weight:bold;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap}
+  #rejtick .rt .why{flex:1;min-width:0;color:var(--ink2);overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap}
+  #rejtick .rt .why em{font-style:normal;color:var(--red)}
+  .rchip .stamp{position:absolute;top:-9px;right:-10px;font-size:9px;font-weight:bold;
+    color:var(--red);border:1px solid var(--red);padding:0 4px;background:var(--bg);
+    transform:rotate(-12deg);opacity:0;animation:rstamp 2.8s forwards}
+  @keyframes rchip-run{
+    0%{transform:translateX(0);opacity:0}
+    7%{opacity:1}
+    42%{transform:translateX(var(--d));border-color:var(--sc)}
+    47%{transform:translateX(calc(var(--d) + 7px));border-color:var(--red);color:var(--red)}
+    53%{transform:translateX(calc(var(--d) - 3px));border-color:var(--red)}
+    62%{transform:translateX(var(--d)) translateY(0) rotate(0);opacity:1;border-color:var(--red)}
+    100%{transform:translateX(var(--d)) translateY(86px) rotate(24deg);opacity:0;border-color:var(--red)}
+  }
+  @keyframes rstamp{0%,44%{opacity:0}52%,82%{opacity:1}100%{opacity:0}}
+  @media (prefers-reduced-motion: reduce){.rchip,.rchip .stamp{animation-duration:.01s}}
+
+  /* ---------- persistent top nav (shared with /trades) ---------- */
+  .topnav{position:sticky;top:0;z-index:98;display:flex;align-items:center;gap:8px;
+    background:var(--bg);border-bottom:1px solid var(--line);
+    margin:-18px -22px 14px;padding:10px 22px}
+  .topnav .tab{background:var(--panel2);color:var(--ink2);border:1px solid var(--line);
+    padding:6px 16px;font-size:11px;letter-spacing:1px;text-decoration:none;white-space:nowrap}
+  .topnav .tab:hover{color:var(--ink);border-color:var(--ink3)}
+  .topnav .tab.on{color:var(--amber-neon);border-color:var(--amber-neon)}
+  .topnav .bd{margin-left:auto;min-width:280px;max-width:440px;text-align:right}
+  .topnav .bdlab{color:var(--orange-neon);font-weight:bold;font-size:10px;letter-spacing:1px;margin-right:8px}
+  #bdtext{font-size:10.5px;color:var(--ink2)}
+  .bdbar{height:4px;background:var(--panel2);margin-top:4px;border-radius:2px;overflow:hidden}
+  #bdfill{height:100%;width:0;background:var(--green);transition:width .4s}
+  /* per-strategy Birdeye usage unit (one per SORTIE RECORD tile) + burn table */
+  .bdunit{font-size:10px;color:var(--ink3);margin-top:3px;letter-spacing:.3px;
+          border-top:1px dotted var(--panel2);padding-top:3px;cursor:help}
+  .bdunit b{color:var(--ink2)} .bdunit .bdq{opacity:.55}
+  .bdtab{width:100%;border-collapse:collapse;font-size:11px}
+  .bdtab th{text-align:left;color:var(--ink3);font-size:9.5px;letter-spacing:1.5px;
+            border-bottom:1px solid var(--panel2);padding:3px 6px 4px}
+  .bdtab td{padding:3px 6px;border-bottom:1px solid rgba(255,255,255,.04)}
+  .bdtab .r,.bdtab th.r{text-align:right}
+  .bdtab tbody tr:hover{background:var(--panel2)}
+  .bdep{color:var(--ink3);font-size:10px;max-width:280px;overflow:hidden;
+        text-overflow:ellipsis;white-space:nowrap}
+  .bdtag{font-size:8.5px;letter-spacing:1px;border:1px solid var(--panel2);
+         border-radius:2px;padding:0 3px;margin-left:5px;color:var(--ink3);vertical-align:1px}
+  .bdtag.warn{color:var(--amber);border-color:var(--amber)}
+  /* ---- API CALL SHARE bar ----
+     "how often does each unit call the API" is a different question from "who is
+     spending the plan", and the two disagree constantly: an expensive endpoint
+     called twice outspends a cheap one called a thousand times. This bar is
+     sized by CALL COUNT; the table below it stays sized by CU. */
+  .bdcalls{margin:0 0 13px}
+  .bdchd{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;
+         color:var(--ink3);font-size:9.5px;letter-spacing:1.5px;margin-bottom:5px}
+  .bdchd b{color:var(--ink2);letter-spacing:1px}
+  .bdcbar{display:flex;height:18px;background:var(--panel2);
+          border:1px solid var(--line);overflow:hidden}
+  .bdcseg{--sc:var(--ink3);position:relative;min-width:2px;display:flex;align-items:center;
+          justify-content:center;background:var(--sc);color:#05050a;font-size:9px;
+          font-weight:bold;letter-spacing:.5px;overflow:hidden;white-space:nowrap;
+          cursor:help;border-right:1px solid rgba(0,0,0,.45);transition:width .4s}
+  .bdcseg:last-child{border-right:none}
+  .bdcseg:hover{filter:brightness(1.25)}
+  /* a research script gets hatched so fleet traffic and lab traffic never blur */
+  .bdcseg.tool{background:repeating-linear-gradient(135deg,var(--sc) 0 4px,rgba(0,0,0,.42) 4px 8px)}
+  /* the slice of a unit's calls the API REFUSED, drawn inside its own segment:
+     a book that looks busy while only collecting 401s should LOOK wrong */
+  .bdcseg .rej{position:absolute;right:0;top:0;bottom:0;pointer-events:none;
+    background:repeating-linear-gradient(45deg,rgba(0,0,0,.62) 0 3px,transparent 3px 6px);
+    border-left:1px solid rgba(0,0,0,.55)}
+  .bdcleg{display:flex;flex-wrap:wrap;gap:2px 18px;margin-top:8px;font-size:10.5px}
+  .bdcleg .li{display:flex;align-items:baseline;gap:7px;min-width:262px;
+              color:var(--ink2);cursor:help}
+  .bdcleg .sw{width:9px;height:9px;background:var(--sc);flex:0 0 9px;
+              position:relative;top:1px}
+  .bdcleg .li.tool .sw{background:repeating-linear-gradient(135deg,var(--sc) 0 3px,rgba(0,0,0,.45) 3px 6px)}
+  .bdcleg .nm{color:var(--ink);min-width:84px;letter-spacing:.5px}
+  .bdcleg .pc{min-width:46px;text-align:right}
+  .bdcleg .nb{color:var(--ink3);font-size:10px}
+</style>
+</head>
+<body>
+<div class="topnav">
+  <span class="tab on">&#8962; HOME</span>
+  <a class="tab" href="bands.html" title="Every book sorted by the multiple its exit ladder can deliver: 2x / 2-5x / 10x+">RETURN BANDS</a>
+  <a class="tab" href="trades.html">TRADE JOURNAL</a>
+  <a class="tab" href="/montecarlo">MONTE CARLO</a>
+  <a class="tab" href="/blacklist" title="Charts purged from the sample">BLACKLIST</a>
+  <a class="tab" href="wallets.html" title="Scouted copy-trade wallets + tracked watchlist + live harvest">WALLETS</a>
+  <a class="tab" href="/fundergraph" title="Rug lineage: why deployer/funder reputation can't work">FUNDER GRAPH</a>
+  <div class="bd" title="Premium plan: 20M CU/cycle (anchored the 23rd), 50 RPS, overage $9.9/1M CU. Local per-strategy ledger — Birdeye has no usage API, so their Usages/Metrics page is authoritative and this is a floor.&#10;&#10;WHAT THE CU FIGURE COVERS: REST requests only. The websocket is billed by VOLUME and is metered here in BYTES, not CU (no published byte→CU formula; set bdusage.WS_CU_PER_MB once you calibrate one). On 2026-08-11 the stream was ~85% of actual spend while this meter read 0.26%.&#10;&#10;'ok / tried' counts ATTEMPTS: a refused call costs no CU but still means the fleet is hammering a key that is not working.&#10;&#10;'WS n/m live' is derived from whether a frame actually arrived in the last 10 minutes — the socket's own 'connected' flag stays true on a half-open socket and cannot be trusted.&#10;&#10;'proj' = end-of-cycle REST spend at the current burn rate; see BIRDEYE BURN for the per-book breakdown.">
+    <span class="bdlab">BIRDEYE API</span><span id="bdtext">no usage tracked yet</span>
+    <div class="bdbar"><div id="bdfill"></div></div>
+  </div>
+</div>
+<div class="wrap">
+
+  <header>
+    <div class="nerv">
+      <span class="word">NERV</span>
+      <span class="sub">ネルフ &nbsp;MARKET OPS</span>
+    </div>
+    <div class="title">
+      <h1>MEMEBOT COMMAND — TOKYO-3 TRADING TERMINAL</h1>
+      <div class="jp">エヴァンゲリオン・ミームコイン作戦司令部</div>
+    </div>
+    <div class="hstatus">
+      <span id="clock">--:--:--</span>
+      <span id="mode-badge" class="badge sim">SIMULATION MODE</span>
+      <span id="led"><span class="dot"></span><span id="led-txt">ESTABLISHING LINK…</span></span>
+    </div>
+  </header>
+
+  <div id="alert" class="idle">
+    <span class="pat" id="alert-pat">STANDBY</span>
+    <span class="msg" id="alert-msg">Awaiting first telemetry from MAGI…</span>
+  </div>
+
+  <div class="grid3">
+    <div class="panel">
+      <div class="ptab"><span>MAGI · MELCHIOR-1 — SCANNER</span><span class="verdict ok" id="v-mel">OK 承認</span></div>
+      <div class="pbody" id="magi-mel"></div>
+    </div>
+    <div class="panel">
+      <div class="ptab"><span>MAGI · BALTHASAR-2 — RISK</span><span class="verdict ok" id="v-bal">OK 承認</span></div>
+      <div class="pbody" id="magi-bal"></div>
+    </div>
+    <div class="panel">
+      <div class="ptab"><span>MAGI · CASPER-3 — EXECUTION</span><span class="verdict ok" id="v-cas">OK 承認</span></div>
+      <div class="pbody" id="magi-cas"></div>
+    </div>
+  </div>
+
+  <div class="sect"><h2>ACTIVE UNITS</h2><span class="jp">出撃中のエヴァ</span></div>
+  <div class="grid3" id="units"></div>
+
+  <div class="sect"><h2>SORTIE RECORD</h2><span class="jp">戦闘記録</span></div>
+  <div class="tiles" id="tiles"></div>
+  <div style="color:var(--ink3);font-size:10px;letter-spacing:2px;margin:2px 0 6px">BY STRATEGY 戦略別</div>
+  <div class="tiles" id="tiles-strat"></div>
+
+  <div class="sect"><h2>BIRDEYE BURN</h2><span class="jp">API消費</span></div>
+  <div class="panel"><div class="ptab"><span>BY UNIT — WHO IS CALLING (FREQUENCY) AND WHO IS SPENDING (CU)</span><span class="verdict ok" id="v-bd">—</span></div>
+    <div class="pbody" id="bdburn"></div></div>
+
+  <div class="sect"><h2>STRATEGY LAB</h2><span class="jp">戦術研究室</span></div>
+  <div id="stratlab"></div>
+
+  <div class="sect"><h2>R&amp;D OPERATIONS</h2><span class="jp">作戦進行状況</span></div>
+  <div class="panel"><div class="ptab"><span>PIPELINE — SAMPLE FETCHES &amp; SWEEPS</span><span class="verdict ok" id="v-ops">IDLE</span></div>
+    <div class="pbody" id="ops"></div></div>
+
+  <div class="sect"><h2>PROTOTYPE — ASYM-RUNNER</h2><span class="jp">試作戦略・非対称ランナー</span></div>
+  <div class="cols" id="asym"></div>
+
+  <div class="panel">
+    <div class="ptab"><span>REJECTION AIRLOCK — LIVE FEED · ALL STRATEGIES</span><span class="verdict warn" id="rejbadge">拒否</span></div>
+    <div id="rejfx"><div id="rejrail"></div><span class="gatelbl">ENTRY GATES</span>
+      <span id="rejempty">NO REJECTS IN THE CURRENT LOG WINDOW</span></div>
+    <div id="rejtick"></div>
+  </div>
+
+  <div class="sect"><h2>SYSTEM UPDATES</h2><span class="jp">更新履歴</span></div>
+  <div class="panel collapsed" id="upd-panel">
+    <div class="ptab clk" id="upd-tab" role="button" tabindex="0" aria-expanded="false" aria-controls="upd-body"
+         title="click to expand / collapse the changelog">
+      <span><span class="caret">&#9660;</span>CHANGELOG — PIPELINE &amp; PERFORMANCE<span id="upd-count" style="opacity:.7"></span></span>
+      <span class="verdict ok">LOGGED</span></div>
+    <div class="pbody" id="upd-body"><table>
+      <thead><tr><th>TIME (UTC)</th><th>UPDATE</th><th>PERFORMANCE IMPACT</th></tr></thead>
+      <tbody id="updates"></tbody></table></div>
+  </div>
+
+  <div class="sect"><h2>WALLET INTEL</h2><span class="jp">追跡財布</span></div>
+  <div class="panel collapsed" id="wal-panel">
+    <div class="ptab clk" id="wal-tab" role="button" tabindex="0" aria-expanded="false" aria-controls="wallets-body"
+         title="click to expand / collapse the wallet harvest">
+      <span><span class="caret">&#9660;</span>TOP-TRADER HARVEST — SHADOW ONLY</span>
+      <span class="verdict warn" id="wallets-badge">—</span></div>
+    <div class="pbody" id="wallets-body"></div>
+  </div>
+
+  <div class="cols">
+    <div class="panel">
+      <div class="ptab"><span>SORTIE LOG — LAST 10 OPERATIONS</span>
+        <span style="display:flex;gap:4px;align-items:center">
+          <span class="verdict stab" id="tab-live" title="closed paper-trial trades">LIVE PAPER</span>
+          <span class="verdict stab" id="tab-bt" title="backtest journal (simulated fills)">BACKTEST 模擬</span>
+        </span></div>
+      <table>
+        <thead><tr><th>CLOSED (UTC)</th><th>TARGET</th><th>STRAT</th><th style="text-align:right">MULT</th><th style="text-align:right">PNL (SOL)</th><th style="text-align:right" title="total SOL network fees across ALL transactions involving that token, by every trader — not our cost">TOKEN FEES (SOL)</th><th>RESULT</th></tr></thead>
+        <tbody id="sorties"></tbody>
+      </table>
+    </div>
+    <div class="panel">
+      <div class="ptab"><span>MAGI SYSTEM LOG</span><span class="verdict ok" id="v-log">LIVE</span></div>
+      <div id="term"></div>
+    </div>
+  </div>
+
+  <footer>
+    <span>GOD'S IN HIS HEAVEN. ALL'S RIGHT WITH THE WORLD.</span>
+    <span id="foot-mode">SIMULATION — NO REAL FUNDS AT RISK</span>
+  </footer>
+</div>
+<div id="tip"></div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmtSol = (v, sign) => (sign && v > 0 ? '+' : '') + v.toFixed(4);
+const fmtPx = v => '$' + (v >= 1 ? v.toFixed(2) : v.toPrecision(3));
+/* Swap fees are ~0.0003 SOL a round trip, so 4dp rounds most of them to 0.0000.
+   5dp keeps a single fill visible; '—' marks a fee we have no record of (a live
+   fill whose network cost could not be read) rather than claiming it was free. */
+const fmtFee = v => (v == null ? '—' : Number(v).toFixed(5));
+
+/* The COIN's own global network fees: total SOL the network charged across every
+   transaction involving that token, by every trader. Not our trading cost.
+   A coin with no cached value yet renders '…', never 0 — a fabricated zero would
+   read as "this coin cost nothing", which is the opposite of unknown. */
+function fmtTokenFee(tf){
+  if (!tf || tf.pending || tf.sol == null) return '<span title="not computed yet — run: python tokenfees.py --warm" style="color:var(--ink3)">…</span>';
+  const v = tf.sol < 1 ? tf.sol.toFixed(4) : tf.sol.toFixed(2);
+  const cap = tf.capped ? '+' : '';
+  const t = `${tf.txs.toLocaleString()} transactions x ${tf.mean_fee_sol} SOL mean fee`
+    + (tf.capped ? ' — LOWER BOUND, signature paging hit its cap' : '')
+    + ' · estimated: exact tx count x sampled mean fee';
+  return `<span title="${t}">${v}${cap}</span>`;
+}
+const fmtVol = v => v >= 1000 ? (v/1000).toFixed(1) + 'k' : v.toFixed(0);
+
+/* ---- Birdeye usage meter (shared look with /trades) ---- */
+const bdFmt = n => n >= 1e6 ? (n/1e6).toFixed(2)+'M' : n >= 1e3 ? (n/1e3).toFixed(1)+'K' : String(n);
+/* Latest usage snapshot, shared with the per-strategy tiles and the BIRDEYE
+   BURN table. Those render off the state poll, which is faster than this one,
+   so they read the last snapshot rather than each fetching their own. */
+let BD_SNAP = null;
+function bdPoll(){
+  fetch('data/bdusage.json?t=' + Date.now()).then(r => r.json()).then(s => {
+    if (!s || s.requests === undefined) return;
+    BD_SNAP = s;
+    const pct = s.pct_of_plan || 0;
+    // Projected end-of-cycle is the number that answers "will I blow the plan
+    // again" - the raw total only says how much is already gone.
+    const proj = s.projected_pct_of_plan;
+
+    /* Three separate truths, and the old header told only the flattering one.
+       1. A KEY THAT REFUSES is not low usage. 1,613 successful requests read as
+          a quiet fleet; the same fleet had 40,317 attempts, 98.8% of them 401s.
+       2. THE STREAM IS NOT IN THIS NUMBER. Birdeye bills the websocket by
+          volume, so CU here is a floor on spend, never the total - that gap is
+          what cost 15M CU in seven days while this bar sat at 0.26%.
+       3. A SOCKET THAT CLAIMS CONNECTED IS NOT A LIVE FEED. `live` is derived
+          from whether a frame actually arrived, not from the flag. */
+    const wsN = s.ws_books || 0, wsLive = s.ws_books_live || 0;
+    const silent = Object.values(s.ws || {})
+      .map(h => h.silent_sec).filter(v => v != null);
+    const silentH = silent.length ? Math.min(...silent) / 3600 : null;
+    const wsVol = s.ws_bytes ? ' · WS ' + bdFmt(s.ws_bytes) + 'B' + (s.ws_priced ? '' : ' unpriced')
+      : ' · WS 0B metered';
+    const keyBad = s.key_ok === false;
+
+    const head = keyBad
+      ? '⚠ KEY REFUSING ' + (s.refused_pct || 0).toFixed(1) + '% — ' +
+        (s.rejected || 0).toLocaleString() + ' of ' + (s.calls_attempted || 0).toLocaleString() +
+        ' calls rejected'
+      : s.requests.toLocaleString() + ' ok / ' + (s.calls_attempted || 0).toLocaleString() + ' tried';
+    $('bdtext').textContent = head +
+      ' · ~' + bdFmt(s.cu_est) + ' / ' + bdFmt(s.plan_cu) + ' CU (' + pct.toFixed(1) + '% REST only)' +
+      wsVol +
+      ' · WS ' + wsLive + '/' + wsN + ' live' +
+      (s.ws_books_carrier ? ', ' + s.ws_books_carrier + ' carrier-only' : '') +
+      // only meaningful when nothing is arriving at all; a carrier-only socket
+      // has fresh frames and would otherwise print a misleading "silent 0h"
+      (wsLive === 0 && !s.ws_books_carrier && wsN && silentH != null
+        ? ' (silent ' + silentH.toFixed(0) + 'h)' : '') +
+      ' · ' + (s.period_label || s.month) +
+      (proj != null && !keyBad ? ' · proj ' + proj.toFixed(0) + '%' : '') +
+      (s.overage_usd_est ? ' · overage ~$' + s.overage_usd_est.toFixed(2)
+        : s.projected_overage_usd ? ' · proj overage ~$' + s.projected_overage_usd.toFixed(2) : '');
+    $('bdtext').style.color = keyBad ? 'var(--red)' : '';
+    // The bar shows METERED CU against the plan. With the key refusing, or the
+    // stream unpriced, a short green bar means "we cannot see the spend", not
+    // "there is none" - so it goes red rather than reassuring.
+    $('bdfill').style.width = Math.min(100, Math.max(pct, keyBad ? 100 : 0)) + '%';
+    $('bdfill').style.background = (keyBad || pct >= 90) ? 'var(--red)'
+      : pct >= 60 ? 'var(--amber)' : 'var(--green)';
+    bdBurn();
+  }).catch(() => {});
+}
+
+/* ---- per-strategy usage unit ----
+   `key` is the dashboard's strategy key, which equals cfg.strategy for every
+   book (BASE reads config.asym.json, whose config omits `strategy` and so
+   defaults to "base"). A book with no shard has simply not spent a CU since
+   the meter was sharded - that is a real answer, not a missing one. */
+/* Websocket health for one book. `connected` is the socket's own flag and it
+   lies: it is set when the socket opens and cleared only on an exception, so a
+   half-open socket reports connected forever. On 2026-08-16 all sixteen books
+   claimed connected with their newest frame 39 hours old. So LIVE is derived
+   from traffic, and a claimed-but-silent socket is drawn as the fault it is. */
+function wsChip(s){
+  const w = s && s.ws;
+  if (!w) return '';
+  const hrs = w.silent_sec != null ? w.silent_sec / 3600 : null;
+  const vol = s.ws_bytes ? bdFmt(s.ws_bytes) + 'B' : '0B';
+  if (w.live)
+    return ` · <span title="websocket delivering: ${w.msgs.toLocaleString()} frames, ${vol} metered this period. Billed by volume - not counted in the CU figure.">WS live ${vol}</span>`;
+  // Connected, frames arriving, no listings or prices in them. This is what a
+  // refused key looks like from inside the socket, and it is NOT a live feed.
+  if (w.carrier_only)
+    return ` · <span class="warn" title="the socket is open and frames are arriving, but none of them carried a listing or a price — this is what a refused key looks like from inside a connected socket. ${w.has_data_clock ? '' : 'This runner predates the data clock; restart it to measure properly.'}">WS carrier only</span>`;
+  const label = hrs == null ? 'never connected'
+    : hrs >= 1 ? `silent ${hrs.toFixed(0)}h` : `silent ${Math.round(w.silent_sec / 60)}m`;
+  return ` · <span class="neg" title="${w.claims_connected
+    ? 'the socket still reports CONNECTED, but no frame has arrived in ' + label.replace('silent ', '')
+      + '. A half-open socket never raises, so the flag stays true - this is the failure it hides.'
+    : 'socket is down'}\n${w.reconnects} reconnect(s) this run">WS ${label}</span>`;
+}
+
+function bdUnit(key){
+  const s = BD_SNAP && BD_SNAP.by_strategy && BD_SNAP.by_strategy[key];
+  if (!s) return `<div class="bdunit" title="this book has made no Birdeye call at all this billing period — not a missing number, a zero">⚡ <span class="bdq">no API calls</span></div>`;
+  const eps = Object.entries(s.by_endpoint || {}).sort((a,b) => b[1]-a[1]);
+  const tip = 'this book\'s Birdeye spend this billing period:\n'
+    + eps.map(([e,n]) => `  ${n.toLocaleString()} x ${e}`).join('\n')
+    + `\n\n${s.pct_of_plan}% of the ${bdFmt(BD_SNAP.plan_cu)} CU plan`
+    + `\n${bdAtt(s).toLocaleString()} API call(s) = ${(s.pct_of_calls != null ? s.pct_of_calls : 0)}% `
+    + `of every call the fleet made (frequency, not money - see the bar in BIRDEYE BURN)`
+    + (s.calls_per_hour != null ? `\n${s.calls_per_hour.toLocaleString()} calls/h` : '')
+    + (s.cu_per_hour != null ? `\nmeasured over ${s.active_hours}h of active spending` : '')
+    + (s.rejected ? `\n\n${s.rejected.toLocaleString()} request(s) REFUSED by the API `
+        + `(${Object.entries(s.rejected_by_code || {}).map(([c,n]) => c + ' x' + n).join(', ')})`
+        + ' — refused requests cost no CU, but mean this book is hammering a key that is not working' : '')
+    + (s.stale ? '\n\nshard is stale (>15m since last write) - book may be down' : '');
+  const cls = s.pct_of_fleet >= 25 ? 'neg' : s.pct_of_fleet >= 10 ? 'warn' : '';
+  // call frequency alongside spend: this tile's share of every API call the
+  // fleet made, drawn as a sliver so a chatty book is visible without reading
+  // the number. Scaled to the fleet total, so all tiles share one scale.
+  const att = bdAtt(s);
+  const pcCalls = s.pct_of_calls != null ? s.pct_of_calls : 0;
+  const ccls = pcCalls >= 25 ? 'neg' : pcCalls >= 10 ? 'warn' : '';
+  return `<div class="bdunit" title="${esc(tip)}">⚡ <b class="${cls}">${bdFmt(s.cu_est)} CU</b>`
+    + ` · <b class="${ccls}">${att.toLocaleString()} calls</b> (${pcCalls.toFixed(1)}% of fleet calls)`
+    + (s.calls_per_hour != null ? ` · ${bdFmt(Math.round(s.calls_per_hour))} calls/h` : '')
+    + (s.cu_per_hour != null ? ` · ${bdFmt(Math.round(s.cu_per_hour))} CU/h` : '')
+    + (s.rejected ? ` · <span class="neg">${bdFmt(s.rejected)} refused</span>` : '')
+    // The stream, stated separately because it is billed separately and none of
+    // the CU above includes it. A book whose socket claims connected but has
+    // received nothing for hours is reported as SILENT, not as connected.
+    + wsChip(s)
+    + `<div style="height:3px;margin-top:3px;background:var(--panel2)" `
+    + `title="${pcCalls.toFixed(1)}% of every API call the fleet made this period">`
+    + `<div style="height:100%;width:${Math.min(100, pcCalls).toFixed(1)}%;`
+    + `background:${pcCalls >= 25 ? 'var(--red)' : pcCalls >= 10 ? 'var(--amber)' : 'var(--green)'}"></div></div>`
+    + `</div>`;
+}
+
+/* ---- API CALL SHARE bar ----
+   Answers "how often does each unit hit the API", which the CU table cannot: CU
+   weights by endpoint price, so one /defi/v3/ohlcv call outranks three cheap ones.
+
+   Sized by ATTEMPTS = billable requests + requests the API refused. Refusals cost
+   no CU but they are still the book choosing to call, and they still consume the
+   rate limit — counting only billable requests would draw an idle-looking fleet
+   while a broken key is being hammered 26k times, which is exactly what happened
+   on 2026-08-05.
+
+   Denominator is the traffic that HAS an owner (shards). The pre-split legacy
+   blob has no owner recorded, so it cannot be a segment; it is stated as a
+   number under the bar instead of being silently dropped. */
+const BD_HUE = ['#00e07a','#ffb020','#7ad0f0','#c39bff','#ff5f6d','#5ce1e6',
+                '#f0e14a','#8ce35b','#ff8ac4','#6f9dff','#e07a3c','#a7f3d0',
+                '#d8b4fe','#fca5a5','#9aa0b8'];
+const bdAtt = v => (v.attempted != null ? v.attempted : (v.requests || 0));
+/* stable colour per unit: rank in the current call ranking, so the heaviest
+   caller always reads as the same first hue between polls */
+let BD_COLOR = {};
+function bdCallBar(){
+  const bs = BD_SNAP.by_strategy || {};
+  const owned = Object.entries(bs).filter(([,v]) => v.kind !== 'legacy')
+                      .sort((a,b) => bdAtt(b[1]) - bdAtt(a[1]));
+  const tot = owned.reduce((n,[,v]) => n + bdAtt(v), 0);
+  const orphan = Object.entries(bs).filter(([,v]) => v.kind === 'legacy')
+                       .reduce((n,[,v]) => n + bdAtt(v), 0);
+  BD_COLOR = {};
+  owned.forEach(([k], i) => BD_COLOR[k] = BD_HUE[i % BD_HUE.length]);
+  if (!tot) {
+    return `<div class="bdcalls"><div class="bdchd"><span>API CALL SHARE</span></div>`
+      + `<div class="sub">no API call has been attributed to a unit this billing period`
+      + (orphan ? ` — ${orphan.toLocaleString()} pre-split calls have no owner recorded` : '')
+      + `</div></div>`;
+  }
+  const share = v => 100 * bdAtt(v) / tot;
+  const seg = owned.map(([k, v]) => {
+    const p = share(v);
+    const rejPct = bdAtt(v) ? 100 * (v.rejected || 0) / bdAtt(v) : 0;
+    const eps = Object.entries(v.by_endpoint || {}).sort((a,b) => b[1]-a[1])
+                  .map(([e,n]) => `  ${n.toLocaleString()} x ${e}`).join('\n');
+    const tip = `${k} — ${bdAtt(v).toLocaleString()} API call(s), ${p.toFixed(1)}% of all `
+      + `owned traffic this period\n`
+      + `  ${(v.requests||0).toLocaleString()} billable · ${(v.rejected||0).toLocaleString()} refused`
+      + (rejPct >= 1 ? ` (${rejPct.toFixed(0)}% refused — hatched)` : '')
+      + (v.calls_per_hour != null ? `\n  ${v.calls_per_hour.toLocaleString()} calls/h over ${v.active_hours}h active` : '')
+      + `\n  ~${bdFmt(v.cu_est)} CU (${v.pct_of_fleet.toFixed(1)}% of fleet spend)`
+      + (eps ? `\n\nendpoints:\n${eps}` : '')
+      + (v.kind === 'tool' ? '\n\nresearch script, not a live book' : '')
+      + (v.stale && v.kind === 'book' ? '\n\nshard stale >15m — book may be down' : '');
+    return `<div class="bdcseg${v.kind === 'tool' ? ' tool' : ''}" title="${esc(tip)}"`
+      + ` style="width:${p.toFixed(2)}%;--sc:${BD_COLOR[k]}">`
+      + (p >= 7 ? esc(k) + ' ' + p.toFixed(0) + '%' : '')
+      + (rejPct > 0 ? `<span class="rej" style="width:${rejPct.toFixed(1)}%"></span>` : '')
+      + `</div>`;
+  }).join('');
+  const leg = owned.map(([k, v]) => {
+    const p = share(v);
+    return `<div class="li ${v.kind === 'tool' ? 'tool' : ''}" style="--sc:${BD_COLOR[k]}"`
+      + ` title="${esc(k + ': ' + bdAtt(v).toLocaleString() + ' calls (' + (v.requests||0).toLocaleString()
+          + ' billable, ' + (v.rejected||0).toLocaleString() + ' refused)')}">`
+      + `<span class="sw"></span><span class="nm">${esc(k)}</span>`
+      + `<span class="pc"><b>${p.toFixed(1)}%</b></span>`
+      + `<span class="nb">${bdFmt(bdAtt(v))} calls`
+      + (v.calls_per_hour != null ? ` · ${bdFmt(Math.round(v.calls_per_hour))}/h` : '')
+      + (v.rejected ? ` · <span class="neg">${bdFmt(v.rejected)} refused</span>` : '')
+      + `</span></div>`;
+  }).join('');
+  const top = owned[0];
+  return `<div class="bdcalls">`
+    + `<div class="bdchd"><span>API CALL SHARE — HOW OFTEN EACH UNIT CALLS `
+    + `<b>(${tot.toLocaleString()} calls · ${owned.length} units)</b></span>`
+    + `<span>BUSIEST <b>${esc(top[0]).toUpperCase()} ${share(top[1]).toFixed(0)}%</b>`
+    + (BD_SNAP.calls_per_hour != null
+        ? ` · <span title="measured over the fleet's own active span (${BD_SNAP.calls_active_hours}h from first call seen to last), the same way each unit's rate is — not averaged across the idle part of the billing cycle">`
+          + `FLEET ${bdFmt(Math.round(BD_SNAP.calls_per_hour))} CALLS/H</span>` : '')
+    + `</span></div>`
+    + `<div class="bdcbar" title="segment width = share of API calls (billable + refused). Hatched right edge of a segment = the portion the API refused. Diagonal-striped segment = research script, not a live book.">${seg}</div>`
+    + `<div class="bdcleg">${leg}</div>`
+    + (orphan ? `<div class="sub" style="margin-top:7px">not in the bar: `
+        + `<b>${orphan.toLocaleString()}</b> call(s) recorded before per-strategy sharding began — `
+        + `no owner was stored for them, so they cannot be attributed to a unit `
+        + `(${(100*orphan/(orphan+tot)).toFixed(0)}% of all recorded calls this period).</div>` : '')
+    // The ledger hooks bd_get(), i.e. REST only. Every live book also holds a
+    // Birdeye WEBSOCKET streaming 1m candles, which is billed per connection and
+    // never passes through record(). Without this line the bar would imply a book
+    // on the WS feed is idle - PULLBACKV2 shows zero REST calls while streaming.
+    + `<div class="sub" style="margin-top:4px">REST calls only. Every live book also holds a `
+    + `Birdeye <b>WebSocket</b> (streaming 1m candles), which is billed per connection and never `
+    + `passes through the request ledger — a book can stream continuously and still show few calls here.</div>`
+    + `</div>`;
+}
+
+/* Fleet ranking: every shard, books and research tools together, worst first.
+   Tools are in the same table on purpose - the historical blow-ups came from
+   bdgrow/bdfetch backfills, not the runners, and splitting them into a second
+   table is how that stayed invisible. */
+function bdBurn(){
+  const el = $('bdburn');
+  if (!el || !BD_SNAP) return;
+  const bs = BD_SNAP.by_strategy || {};
+  const rows = Object.entries(bs).sort((a,b) => b[1].cu_est - a[1].cu_est);
+  if (!rows.length){
+    el.innerHTML = `<div class="sub">no Birdeye spend recorded this billing period</div>`;
+    $('v-bd').className = 'verdict ok'; $('v-bd').textContent = 'IDLE';
+    return;
+  }
+  const top = rows[0];
+  // mini-bar scale: busiest OWNED caller. The pre-split blob is bigger than all
+  // of them combined and would flatten every real book into a sliver, so it is
+  // outside this scale exactly as it is outside the share denominator.
+  const maxAtt = Math.max(...rows.filter(([,v]) => v.pct_of_calls != null)
+                                 .map(([,v]) => bdAtt(v)), 0);
+  $('v-bd').className = 'verdict ' + (top[1].pct_of_fleet >= 50 ? 'bad' : top[1].pct_of_fleet >= 30 ? 'warn' : 'ok');
+  $('v-bd').textContent = top[0].toUpperCase() + ' ' + top[1].pct_of_fleet.toFixed(0) + '%';
+  el.innerHTML = bdCallBar()
+    + `<table class="bdtab"><thead><tr><th>UNIT</th>`
+    + `<th class="r" title="every call the unit made: billable requests plus the ones the API refused">CALLS</th>`
+    + `<th class="r" title="share of the fleet's API CALLS (frequency) — not the same ranking as % FLEET, which is CU">% CALLS</th>`
+    + `<th class="r" title="calls per hour, measured over the unit's own active span">CALLS/H</th>`
+    + `<th class="r">CU</th>`
+    + `<th class="r" title="share of the fleet's CU SPEND (money) — an expensive endpoint outranks a chatty cheap one">% FLEET</th><th class="r">CU/H</th>`
+    + `<th class="r" title="requests the API refused (401/403/429). These cost no CU — a big number means the key is broken, not that the quota is gone.">REFUSED</th>`
+    + `<th>ENDPOINTS</th></tr></thead><tbody>`
+    + rows.map(([k, v]) => {
+        const eps = Object.entries(v.by_endpoint || {}).sort((a,b) => b[1]-a[1]);
+        const epTxt = eps.map(([e,n]) => `${e.split('/').pop()} ×${bdFmt(n)}`).join(', ');
+        const cls = v.pct_of_fleet >= 25 ? 'neg' : v.pct_of_fleet >= 10 ? 'warn' : '';
+        const kindTag = v.kind === 'tool'
+          ? `<span class="bdtag" title="a research script, not a live book">TOOL</span>`
+          : v.kind === 'legacy'
+          ? `<span class="bdtag" title="spent before per-strategy sharding began - no owner was recorded">PRE-SPLIT</span>` : '';
+        const staleTag = v.stale && v.kind === 'book'
+          ? `<span class="bdtag warn" title="no write in 15m - book is likely down">STALE</span>` : '';
+        // call-frequency cells. Scaled against the BUSIEST caller, not the fleet
+        // total, so the ranking stays readable when one unit owns most of it.
+        const att = bdAtt(v);
+        const pcCalls = v.pct_of_calls;   // null = outside the share denominator
+        const w = maxAtt ? Math.min(100, Math.max(1, 100 * att / maxAtt)) : 0;
+        const ccls = pcCalls >= 25 ? 'neg' : pcCalls >= 10 ? 'warn' : '';
+        const swatch = BD_COLOR[k]
+          ? `<span style="display:inline-block;width:8px;height:8px;margin-right:6px;`
+            + `background:${BD_COLOR[k]}"></span>` : '';
+        return `<tr><td>${swatch}<b>${esc(k)}</b>${kindTag}${staleTag}</td>`
+          + `<td class="r" title="${v.requests.toLocaleString()} billable + ${(v.rejected||0).toLocaleString()} refused">`
+          + `${att.toLocaleString()}</td>`
+          + (pcCalls == null
+              ? `<td class="r" title="no owner was recorded for these calls, so they are outside the per-unit share">—</td>`
+              : `<td class="r ${ccls}">${pcCalls.toFixed(1)}%`
+                + `<div style="height:3px;margin-top:2px;background:var(--panel2)">`
+                + `<div style="height:100%;width:${w.toFixed(1)}%;margin-left:auto;`
+                + `background:${BD_COLOR[k] || 'var(--ink3)'}"></div></div></td>`)
+          + `<td class="r">${v.calls_per_hour != null ? bdFmt(Math.round(v.calls_per_hour)) : '—'}</td>`
+          + `<td class="r ${cls}">${bdFmt(v.cu_est)}</td>`
+          + `<td class="r ${cls}">${v.pct_of_fleet.toFixed(1)}%</td>`
+          + `<td class="r">${v.cu_per_hour != null ? bdFmt(Math.round(v.cu_per_hour)) : '—'}</td>`
+          + `<td class="r ${v.rejected ? 'neg' : ''}" title="${esc(Object.entries(v.rejected_by_code || {}).map(([c,n]) => c + ' x' + n).join(', ') || 'none')}">`
+          + `${v.rejected ? bdFmt(v.rejected) : '—'}</td>`
+          + `<td class="bdep" title="${esc(epTxt)}">${esc(epTxt)}</td></tr>`;
+      }).join('')
+    + `</tbody></table>`
+    + `<div class="sub" style="margin-top:6px">`
+    + `${bdFmt(BD_SNAP.cu_est)} CU spent · ${bdFmt(Math.round(BD_SNAP.cu_per_hour))} CU/h now · `
+    + `projected <b class="${BD_SNAP.projected_pct_of_plan >= 100 ? 'neg' : BD_SNAP.projected_pct_of_plan >= 75 ? 'warn' : ''}">`
+    + `${bdFmt(BD_SNAP.projected_cu)} CU (${BD_SNAP.projected_pct_of_plan.toFixed(0)}% of plan)</b> by ${esc(BD_SNAP.period_label || '')}`
+    + (BD_SNAP.projected_overage_usd ? ` · projected overage ~$${BD_SNAP.projected_overage_usd.toFixed(2)}` : '')
+    + `</div>`
+    // A refusal storm and a quota blow-out look identical from the outside
+    // (both = "Birdeye stopped working"), so say which one this is.
+    + (BD_SNAP.rejected ? `<div class="sub" style="margin-top:4px;color:var(--red)">`
+        + `⚠ ${BD_SNAP.rejected.toLocaleString()} requests REFUSED by the API this period. `
+        + `Refused requests cost no CU — this is a key/auth problem, not a quota problem. `
+        + `The fleet is retrying against a key that is not answering.</div>` : '');
+}
+bdPoll();
+setInterval(bdPoll, 60000);
+
+function clock(){
+  const d = new Date();
+  const p = n => String(n).padStart(2,'0');
+  $('clock').textContent =
+    `${d.getUTCFullYear()}-${p(d.getUTCMonth()+1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())} UTC`;
+}
+setInterval(clock, 1000); clock();
+
+function kv(k, v){ return `<div class="kv"><span class="k">${k}</span><span class="v">${v}</span></div>`; }
+
+function verdict(el, cls, txt){ el.className = 'verdict ' + cls; el.textContent = txt; }
+
+function statusOf(mult, stop){
+  if (mult >= 2)            return {cls:'good', txt:'▰ SYNC HIGH'};
+  if (mult >= 0.9)          return {cls:'good', txt:'▰ NOMINAL'};
+  if (mult > 1 - stop/100 + 0.1) return {cls:'warn', txt:'▲ CAUTION'};
+  return {cls:'crit', txt:'● CRITICAL'};
+}
+
+function sparkline(vals){
+  if (!vals || vals.length < 2)
+    return `<div class="spark-empty">AWAITING TELEMETRY</div>`;
+  const w = 260, h = 48, pad = 4;
+  const min = Math.min(...vals, 1), max = Math.max(...vals, 1);
+  const span = (max - min) || 1;
+  const pts = vals.map((v, i) => [
+    pad + i * (w - 2*pad) / (vals.length - 1),
+    h - pad - (v - min) * (h - 2*pad) / span
+  ]);
+  const poly = pts.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
+  const yBase = h - pad - (1 - min) * (h - 2*pad) / span;
+  const last = pts[pts.length - 1];
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" data-vals="${vals.join(',')}" preserveAspectRatio="none">
+    <line x1="${pad}" x2="${w-pad}" y1="${yBase.toFixed(1)}" y2="${yBase.toFixed(1)}"/>
+    <polyline points="${poly}"/>
+    <circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="3"/>
+  </svg>`;
+}
+
+function candleChart(rows){
+  // rows: [[ts,o,h,l,c,v_usd],...] 1m token candles from the Birdeye WS store
+  const w = 260, ph = 50, vh = 16, h = 74;   // price pane 0-50, volume pane bottom
+  const n = rows.length;
+  const lo = Math.min(...rows.map(r => r[3])), hi = Math.max(...rows.map(r => r[2]));
+  const span = (hi - lo) || hi || 1;
+  const vmax = Math.max(...rows.map(r => r[5]));
+  const bw = w / n, cw = Math.max(1.2, bw * 0.62);
+  const y = v => 2 + (ph - 4) * (1 - (v - lo) / span);
+  let mk = '';
+  rows.forEach((r, i) => {
+    const x = i*bw + bw/2, cls = r[4] >= r[1] ? 'up' : 'dn';
+    const yo = y(r[1]), yc = y(r[4]);
+    mk += `<line class="${cls}" x1="${x.toFixed(2)}" x2="${x.toFixed(2)}" y1="${y(r[2]).toFixed(2)}" y2="${y(r[3]).toFixed(2)}"/>` +
+      `<rect class="${cls}" x="${(x-cw/2).toFixed(2)}" y="${Math.min(yo,yc).toFixed(2)}" width="${cw.toFixed(2)}" height="${Math.max(.8, Math.abs(yo-yc)).toFixed(2)}"/>`;
+    const vb = vmax > 0 ? Math.max(.6, vh * r[5] / vmax) : .6;
+    mk += `<rect class="vol ${cls}" x="${(x-cw/2).toFixed(2)}" y="${(h-vb).toFixed(2)}" width="${cw.toFixed(2)}" height="${vb.toFixed(2)}"/>`;
+  });
+  return `<svg class="candle" viewBox="0 0 ${w} ${h}" data-c="${rows.map(r => r.join('|')).join(';')}" preserveAspectRatio="none">${mk}</svg>`;
+}
+
+function unitChart(p){
+  const rows = p.candles || [];
+  if (rows.length < 3) return sparkline(p.spark);
+  return `<div class="chartcap"><span>TOKEN PRICE · 1M CANDLES + VOL</span>
+    <span>${fmtPx(rows[rows.length-1][4])}</span></div>` + candleChart(rows);
+}
+
+function renderUnits(st){
+  const el = $('units');
+  // Every book's open positions, not just the launch config's. Falls back to
+  // st.open so an older server build still renders something.
+  const units = (st.fleet_open && st.fleet_open.length) ? st.fleet_open
+              : (st.fleet_open ? [] : st.open);
+  if (!units.length){
+    el.innerHTML = `<div class="panel cage" style="grid-column:1/-1">NO ACTIVE UNITS — ALL EVA IN CAGE. SCANNER SWEEPING FOR TARGETS.<span class="jp">全機格納庫待機中</span></div>`;
+    return;
+  }
+  el.innerHTML = units.map((p, i) => {
+    // each unit is judged against ITS OWN book's ladder — stops and hard-TPs
+    // differ per strategy (20x base vs 50x for the quest families)
+    const ex = p.exits || st.config;
+    const hardTp = ex.hard_tp_multiple, stop = ex.stop_loss_pct;
+    const s = statusOf(p.multiple, stop);
+    const pct = Math.max(0, Math.min(100, p.multiple / hardTp * 100));
+    const fillCls = s.cls === 'good' ? '' : s.cls === 'warn' ? 'warn' : 'crit';
+    const ticks =
+      `<div class="tick stop" style="left:${(1-stop/100)/hardTp*100}%"></div>` +
+      (ex.take_profits || []).map(tp => `<div class="tick" style="left:${tp.multiple/hardTp*100}%"></div>`).join('');
+    const stratChip = p.strategy_label
+      ? `<span class="chip">${esc(p.strategy_label)}</span>` : '';
+    const quoteWarn = p.quote_ok ? '' : ' &nbsp;<span class="chip crit">● NO SELL QUOTE</span>';
+    const pnlSol = p.banked_sol + p.value_sol - p.spent_sol;
+    const px = st.sol_price_usd || (st.wallet ? st.wallet.sol_price_usd : null);
+    const pnlCls = pnlSol > 0 ? 'pos' : pnlSol < 0 ? 'neg' : '';
+    const pnlUsd = px == null ? '≈ $—'
+      : '≈ ' + (pnlSol >= 0 ? '+' : '-') + '$' + Math.abs(pnlSol * px).toFixed(2);
+    return `<div class="panel unit">
+      <div class="uhead"><span class="utag">EVA UNIT-0${i}</span><span class="usym">${esc(p.symbol)}</span>
+        ${stratChip}<span class="chip ${s.cls}">${s.txt}</span></div>
+      <div class="ubody">
+        <div class="sync"><span class="lbl">SYNC RATIO (PNL)</span>
+          <span class="val ${pnlCls}">${p.multiple > 1 ? '+' : ''}${((p.multiple-1)*100).toFixed(1)}<small>%</small></span></div>
+        <div class="upnl ${pnlCls}"><span class="lbl">ACTIVE PNL</span>
+          <span class="amt"><span class="sol">${fmtSol(pnlSol, true)} SOL</span><span class="usd">${pnlUsd}</span></span></div>
+        <div class="bar"><div class="fill ${fillCls}" style="width:${pct}%"></div>${ticks}</div>
+        <div class="ticklbl"><span>0</span><span>STOP ${(1-stop/100).toFixed(2)}x</span><span>2x</span><span>3x</span><span>${hardTp}x</span></div>
+        ${unitChart(p)}
+        <div class="umeta">SPENT <b>${p.spent_sol.toFixed(4)}</b> ▸ BANKED <b>${p.banked_sol.toFixed(4)}</b> ▸ NOW <b>${p.value_sol.toFixed(4)}</b> SOL<br>
+        PEAK <b>${p.peak.toFixed(2)}x</b> ▸ TP STAGE <b>${p.stage}</b> ▸ AGE <b>${Math.round(p.age_min)}m</b> ▸ <span title="total SOL network fees paid across ALL transactions involving this token, by every trader — not our cost">TOKEN FEES <b>${fmtTokenFee(p.token_fees)}</b></span>${quoteWarn}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderAlert(st){
+  const a = $('alert'), pat = $('alert-pat'), msg = $('alert-msg');
+  const anyHigh = st.open.some(p => p.multiple >= 2);
+  const anyCrit = st.open.some(p => p.multiple <= 1 - st.config.stop_loss_pct/100 + 0.1 || !p.quote_ok);
+  if (anyHigh){ a.className='blue'; pat.textContent='PATTERN: BLUE';
+    msg.textContent='TARGET MULTIPLE ACHIEVED — TAKE-PROFIT LADDER ENGAGED.'; }
+  else if (anyCrit){ a.className='red'; pat.textContent='PATTERN: RED';
+    msg.textContent='UNIT NEAR STOP-LOSS THRESHOLD OR UNSELLABLE — MAGI MONITORING.'; }
+  else if (st.open.length){ a.className='green'; pat.textContent='PATTERN: GREEN';
+    msg.textContent=`${st.open.length} UNIT(S) ENGAGED — ALL PARAMETERS NOMINAL.`; }
+  else { a.className='idle'; pat.textContent='ALL CLEAR';
+    msg.textContent = st.bot_status === 'ACTIVE'
+      ? 'NO ANGELS DETECTED — SCANNER SWEEPING. FILTERS DECLINING BAD TRADES IS NORMAL.'
+      : 'MAGI STANDBY — BOT PROCESS NOT RUNNING. LAUNCH: python run.py'; }
+}
+
+function renderMagi(st){
+  const scan = st.scan;
+  const ws = st.ws;
+  const wsFresh = ws && (Date.now() / 1000 - (ws.updated || 0)) < 120;
+  const wsVal = !ws ? 'OFF'
+    : (wsFresh && ws.connected)
+      ? `<span class="pos">LIVE</span> · ${ws.price_subs} subs · ${ws.watchlist} watch · ${ws.listings_seen} listed`
+      : '<span class="neg">DOWN</span>';
+  $('magi-mel').innerHTML =
+    kv('SYSTEM', st.bot_status === 'ACTIVE' ? 'ACTIVE — SWEEPING' : 'STANDBY') +
+    kv('CANDIDATES', scan ? scan.candidates : '—') +
+    kv('PASSED FILTERS', scan ? scan.passed : '—') +
+    kv('DEEP-CHECKED', scan ? scan.deep : '—') +
+    kv('ENTERED', scan ? scan.entered : '—') +
+    kv('SCAN INTERVAL', st.config.scan_interval_sec + 's') +
+    kv('BIRDEYE WS', wsVal);
+  verdict($('v-mel'), st.bot_status === 'ACTIVE' ? 'ok' : 'warn',
+          st.bot_status === 'ACTIVE' ? 'OK 承認' : 'WAIT 待機');
+
+  const limit = st.config.daily_loss_limit_sol;
+  const used = Math.max(0, -st.realized_today_sol);
+  const frac = Math.min(1, used / limit);
+  const mCls = frac >= 0.8 ? 'crit' : frac >= 0.5 ? 'warn' : '';
+  $('magi-bal').innerHTML =
+    kv('REALIZED TODAY', fmtSol(st.realized_today_sol, true) + ' SOL') +
+    kv('LOSS BREAKER', used.toFixed(4) + ' / ' + limit.toFixed(2) + ' SOL') +
+    `<div class="meter"><div class="fill ${mCls}" style="width:${(frac*100).toFixed(0)}%"></div></div>` +
+    kv('POSITIONS', st.open.length + ' / ' + st.config.max_positions) +
+    kv('STOP LOSS', '-' + st.config.stop_loss_pct + '%') +
+    kv('TRAILING', '-' + st.config.trailing_stop_pct + '% off peak');
+  verdict($('v-bal'), frac >= 1 ? 'bad' : frac >= 0.8 ? 'warn' : 'ok',
+          frac >= 1 ? 'HALT 拒絶' : frac >= 0.8 ? 'WARN 警告' : 'OK 承認');
+
+  const tps = st.config.take_profits.map(t => t.multiple + 'x/' + Math.round(t.sell_fraction_of_remaining*100) + '%').join(' → ');
+  const w = st.wallet;
+  let balHtml = 'RPC N/A';
+  if (w && w.sol !== null && w.sol !== undefined) {
+    const usdLine = (w.usd === null || w.usd === undefined)
+      ? '<span class="usd">≈ $—</span>'
+      : `<span class="usd">≈ $${Number(w.usd).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>`;
+    balHtml = w.sol.toFixed(4) + ' SOL<br>' + usdLine;
+  }
+  $('magi-cas').innerHTML =
+    kv('MODE', st.mode === 'live' ? 'COMBAT (LIVE)' : 'SIMULATION (PAPER)') +
+    (w ? kv('PILOT WALLET', esc(w.pubkey.slice(0,4) + '…' + w.pubkey.slice(-4))) +
+         kv('BALANCE', balHtml) : '') +
+    kv('UNIT SIZE', st.config.position_size_sol + ' SOL') +
+    kv('TP LADDER', tps) +
+    kv('HARD TARGET', st.config.hard_tp_multiple + 'x') +
+    kv('TIME STOP', st.config.max_hold_min + 'm') +
+    kv('SLIPPAGE', st.config.slippage_bps + ' bps');
+  verdict($('v-cas'), st.mode === 'live' ? 'warn' : 'ok',
+          st.mode === 'live' ? 'LIVE 警告' : 'OK 承認');
+}
+
+function renderTiles(st){
+  // fleet-wide roll-up across every strategy ledger. st.closed/st.open are the
+  // launch config's book alone — these tiles claim to speak for the whole fleet,
+  // so they must not read one book.
+  const c = st.fleet || st.closed;
+  const openN = st.fleet ? st.fleet.open : st.open.length;
+  const today = st.fleet ? st.fleet.realized_today_sol : st.realized_today_sol;
+  const voidN = st.fleet ? st.fleet.voided : 0;
+  const pnlCls = v => v > 0 ? 'pos' : v < 0 ? 'neg' : '';
+  const books = st.fleet ? ` across ${st.fleet.books_traded} book${st.fleet.books_traded === 1 ? '' : 's'}` : '';
+  const voidSub = voidN ? ` · ${voidN} void excluded` : '';
+  // our own swap cost is inside that PNL already, so this reads as "of which"
+  const feesTotal = st.fleet ? st.fleet.fees_sol : (c.fees_sol != null ? c.fees_sol : null);
+  const feeSub = feesTotal ? ` · net of our ${fmtFee(feesTotal)} swap cost` : '';
+  // the coins' OWN global network fees, summed over DISTINCT coins (12 of the 44
+  // were traded by more than one book — per-position summing would double-count)
+  const tf = st.token_fees || {};
+  $('tiles').innerHTML =
+    `<div class="panel tile"><div class="lbl">WIN RATE</div>
+      <div class="big">${c.win_rate === null ? '—' : c.win_rate + '%'}</div>
+      <div class="sub">${c.wins} W / ${c.count - c.wins} L of ${c.count} sorties${books}</div></div>` +
+    `<div class="panel tile"><div class="lbl">TOTAL PNL</div>
+      <div class="big ${pnlCls(c.total_pnl_sol)}">${fmtSol(c.total_pnl_sol, true)}</div>
+      <div class="sub">SOL, all closed sorties${voidSub}${feeSub}</div></div>` +
+    `<div class="panel tile"><div class="lbl">REALIZED TODAY</div>
+      <div class="big ${pnlCls(today)}">${fmtSol(today, true)}</div>
+      <div class="sub">SOL (UTC day) — breaker at -${st.config.daily_loss_limit_sol} per book</div></div>` +
+    `<div class="panel tile"><div class="lbl">SORTIES</div>
+      <div class="big">${c.count}</div>
+      <div class="sub">${openN} unit(s) currently deployed</div></div>` +
+    `<div class="panel tile"><div class="lbl">TOKEN FEES (GLOBAL)</div>
+      <div class="big">${tf.sol == null ? '…' : tf.sol.toFixed(2)}</div>
+      <div class="sub">SOL of network fees across every tx on the ${tf.coins || 0} coins
+        we've traded${tf.computed != null && tf.pending ? ` · ${tf.computed}/${tf.coins} computed` : ''}${tf.capped ? ` · ${tf.capped} capped` : ''}</div></div>`;
+
+  // per-strategy breakdown row (BASE / BOUNCE / HOLDER) — each its own ledger
+  const strat = st.strategies || [];
+  const bd = $('tiles-strat');
+  if (bd){
+    bd.innerHTML = strat.map(s => {
+      const p = s.paper;
+      const balCls = p ? (p.balance_sol > p.start_sol ? 'pos' : p.balance_sol < p.start_sol ? 'neg' : '') : '';
+      // voids are rugged/unsellable positions: real SOL gone, but deliberately
+      // outside pnl and win rate. Show them or a book that only ever rugged
+      // reads as "0 sorties" — i.e. as though it had never traded at all.
+      const voidTag = p && p.voided
+        ? ` · <span class="neg" title="rugged / unsellable — excluded from pnl and win rate">` +
+          `${p.voided} void −${p.voided_sol.toFixed(4)}</span>`
+        : '';
+      const sub = p
+        ? `wr ${p.win_rate === null ? '—' : p.win_rate + '%'} · ${p.count} sortie${p.count === 1 ? '' : 's'} · ` +
+          `pnl <span class="${pnlCls(p.total_pnl_sol)}">${fmtSol(p.total_pnl_sol, true)}</span> · ${p.open} open · ` +
+          `<span title="what THIS BOOK paid in swap fees — already inside the pnl. Per-coin global token fees are on each row, not summed here: 12 coins were traded by more than one book and summing would double-count them.">our cost ${fmtFee(p.fees_sol)}</span>` +
+          voidTag
+        : (s.running ? 'starting — first cycle creates the ledger' : 'not deployed');
+      // No status badge and no strategy chip in this header any more. The chip
+      // re-printed the label that sits next to it, and the badge said ACTIVE
+      // directly above a status strip already saying ACTIVE with uptime and pid.
+      // Both were duplicates, and together they overflowed the row on the longer
+      // names (GRIND-VWAP-X), wrapping ARCHIVE onto a second line and making
+      // that tile taller than its neighbours. Status now lives in one place.
+      const btn = `<button class="archbtn" data-arch="${esc(s.key)}" data-want="${s.archived ? '0' : '1'}"
+        title="${s.archived ? 'put this strategy back into the paper trial' : 'retire this strategy: the watchdog stops it and will not restart it. Ledger is kept.'}"
+        >${s.archived ? 'RESTORE' : 'ARCHIVE'}</button>`;
+      // The LABEL is the link, not the whole tile: ARCHIVE lives in the same row
+      // and a tile-wide handler would make retiring a book one mis-click away.
+      return `<div class="panel tile${s.archived ? ' archived' : ''}">
+        <div class="lbl"><a class="slink" href="/strategy?key=${encodeURIComponent(s.key)}"
+          title="open ${esc(s.label)}: its full trade history, then every entry, exit and safety condition"
+          >${esc(s.label)}</a>${btn}</div>
+        <div class="big ${balCls}">${p ? p.balance_sol.toFixed(3) : '—'}<span style="font-size:12px;color:var(--ink3)"> SOL</span></div>
+        <div class="sub">${sub}</div>
+        ${bdUnit(s.key)}
+        ${balActs(s.key, p ? p.start_sol : null)}
+        ${statusTab(s)}</div>`;
+    }).join('') || `<div class="panel tile"><div class="sub">no live strategies reported</div></div>`;
+  }
+}
+
+/* Per-bot status strip. Two DIFFERENT questions, and they come apart:
+     proc.alive  - is the process up?          (the watchdog's own view)
+     s.running   - is it still scanning?       (log freshness)
+   A book that is up but silent is the failure mode this repo has hit twice, so
+   it gets its own amber state rather than a green light that is lying. With no
+   supervisor running there is nothing to ask, so it reads UNKNOWN, never DOWN. */
+function balActs(key, startSol){
+  const start = startSol != null ? startSol.toFixed(startSol % 1 ? 1 : 0) : '?';
+  return `<div class="balacts">` +
+    `<button class="balbtn" data-bal-refresh="${esc(key)}" ` +
+      `title="fetch fresh sell quotes for open units and update this balance now">↻ REFRESH</button>` +
+    `<button class="balbtn balbtn-reset" data-bal-reset="${esc(key)}" data-start="${esc(String(startSol ?? ''))}" ` +
+      `title="wipe this book's ledger and restore paper balance to ${start} SOL">⟲ RESET</button>` +
+    `</div>`;
+}
+function fmtUp(sec){
+  if (sec === null || sec === undefined) return '';
+  if (sec < 90) return sec + 's';
+  if (sec < 5400) return Math.round(sec / 60) + 'm';
+  return (sec / 3600).toFixed(1) + 'h';
+}
+function statusTab(s){
+  const pr = s.proc;
+  let cls, text, detail;
+  if (s.archived){
+    cls = 'off';  text = 'ARCHIVED';
+    detail = 'retired — the watchdog will not start it';
+  } else if (!s.supervised){
+    cls = 'unk';  text = 'UNKNOWN';
+    detail = 'no watchdog running — nothing to ask';
+  } else if (!pr || !pr.alive){
+    cls = 'down'; text = 'DOWN';
+    detail = 'process not running';
+  } else if (!s.running){
+    cls = 'warn'; text = 'ALIVE · NOT SCANNING';
+    detail = `up ${fmtUp(pr.uptime_sec)} but the log has gone quiet`;
+  } else {
+    cls = 'ok';   text = 'ACTIVE';
+    detail = `up ${fmtUp(pr.uptime_sec)}` + (pr.pid ? ` · pid ${pr.pid}` : '');
+  }
+  const flap = pr && pr.restarts > 0
+    ? `<span class="restarts" title="times the watchdog has had to restart this book">&#8635; ${pr.restarts}</span>` : '';
+  return `<div class="stab ${cls}" title="${esc(detail)}">
+    <span class="dot"></span><span class="txt">${text}</span>${flap}
+    <span class="det">${esc(detail)}</span></div>`;
+}
+
+/* ARCHIVE / RESTORE. Delegated because renderTiles rewrites these tiles on every
+   poll, so a listener bound to a button would die on the next refresh. The server
+   only records intent — watchdog.py stops or starts the runner within ~15s — so
+   the button reports what will happen, and warns when no supervisor is running to
+   make it happen. */
+(function(){
+  const host = $('tiles-strat');
+  if (!host) return;
+  host.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-arch]');
+    if (!btn || btn.disabled) return;
+    const key = btn.getAttribute('data-arch');
+    const want = btn.getAttribute('data-want') === '1';
+    if (want && !confirm(`Archive ${key.toUpperCase()}?\n\nThe watchdog stops it within ~15s and will not restart it, at logon or otherwise.\nIts ledger and history are kept — RESTORE puts it back.`)) return;
+    const prev = btn.textContent;
+    btn.disabled = true; btn.textContent = '…';
+    try{
+      const r = await fetch('/api/strategy/archive', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({key: key, archived: want})
+      });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      if (!j.supervisor) alert(`${j.label} is marked ${j.archived ? 'ARCHIVED' : 'ACTIVE'}, but no watchdog is running.\n\nNothing will ${j.archived ? 'stop' : 'start'} the process until you run: python watchdog.py`);
+      refresh();
+    }catch(err){
+      alert('archive failed: ' + err.message);
+      btn.disabled = false; btn.textContent = prev;
+    }
+  });
+})();
+
+/* REFRESH / RESET balance. Same delegated pattern as archive — tiles are
+   rewritten every poll so listeners must live on the host. */
+(function(){
+  async function balApi(path, key, btn){
+    const prev = btn.textContent;
+    btn.disabled = true; btn.textContent = '…';
+    try{
+      const r = await fetch(path, {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({key: key})
+      });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      refresh();
+      return j;
+    }catch(err){
+      alert('balance action failed: ' + err.message);
+      btn.disabled = false; btn.textContent = prev;
+      return null;
+    }
+  }
+  function bind(host){
+    if (!host || host._balBound) return;
+    host._balBound = true;
+    host.addEventListener('click', async (e) => {
+      const ref = e.target.closest('[data-bal-refresh]');
+      if (ref && !ref.disabled){
+        await balApi('/api/strategy/balance/refresh', ref.getAttribute('data-bal-refresh'), ref);
+        return;
+      }
+      const rst = e.target.closest('[data-bal-reset]');
+      if (!rst || rst.disabled) return;
+      const key = rst.getAttribute('data-bal-reset');
+      const start = rst.getAttribute('data-start') || '?';
+      if (!confirm(`Reset ${key.toUpperCase()} paper ledger?\n\nAll sorties, fills and open units for this book are deleted.\nPaper balance returns to ${start} SOL.\nThe bot keeps running — it simply starts fresh on the next cycle.`)) return;
+      await balApi('/api/strategy/balance/reset', key, rst);
+    });
+  }
+  bind($('tiles-strat'));
+  bind($('asym'));
+})();
+
+function fmtAge(s){
+  if (s < 90) return s + 's ago';
+  if (s < 5400) return Math.round(s/60) + 'm ago';
+  return (s/3600).toFixed(1) + 'h ago';
+}
+
+function renderOps(st){
+  const el = $('ops'), chip = $('v-ops');
+  const ops = st.ops || [];
+  if (!ops.length){
+    el.innerHTML = `<div class="cage">NO PIPELINE OPERATIONS RECORDED<span class="jp">作戦なし</span></div>`;
+    verdict(chip, 'ok', 'IDLE');
+    return;
+  }
+  const anyRunning = ops.some(o => o.status === 'running');
+  const anyStalled = ops.some(o => o.status === 'stalled');
+  verdict(chip, anyStalled ? 'bad' : anyRunning ? 'ok' : 'warn',
+          anyStalled ? 'STALLED 停滞' : anyRunning ? 'RUNNING 進行中' : 'STANDBY 待機');
+  el.innerHTML = ops.map(o => {
+    const chipCls = o.status === 'running' ? 'good' : o.status === 'done' ? 'good'
+                  : o.status === 'stalled' ? 'crit' : 'warn';
+    const chipTxt = o.status === 'running' ? '▶ RUNNING' : o.status === 'done' ? '✓ DONE'
+                  : o.status === 'stalled' ? '● STALLED' : '… PENDING';
+    let bar = '', detail = '';
+    if (o.total){
+      const pct = Math.max(0, Math.min(100, 100 * o.done / o.total));
+      const fillCls = o.status === 'stalled' ? 'crit' : '';
+      bar = `<div class="bar"><div class="fill ${fillCls}" style="width:${pct.toFixed(1)}%"></div></div>`;
+      detail = `${o.done.toLocaleString()} / ${o.total.toLocaleString()} tokens (${pct.toFixed(0)}%)`
+             + (o.cached ? ` · ${o.cached.toLocaleString()} with candles` : '')
+             + (o.no_data ? ` · ${o.no_data.toLocaleString()} no-data` : '')
+             + (o.requests ? ` · ${o.requests.toLocaleString()} reqs` : '');
+    } else if (o.status === 'pending'){
+      detail = 'waiting on upstream sample';
+    }
+    const age = (o.age_sec !== undefined && o.status !== 'pending') ? ` · updated ${fmtAge(o.age_sec)}` : '';
+    return `<div style="padding:6px 0;border-bottom:1px dotted #1e1e2a">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px">
+        <span class="k" style="color:var(--ink3);letter-spacing:1px">${esc(o.name || '?')}${o.phase && o.phase !== 'done' && o.phase !== 'pending' ? ' — ' + esc(o.phase.toUpperCase()) : ''}</span>
+        <span class="chip ${chipCls}">${chipTxt}</span>
+      </div>
+      ${bar}
+      <div style="color:var(--ink2);font-size:11px;margin-top:3px">${esc(detail)}${esc(age)}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderAsym(st){
+  const el = $('asym');
+  const a = st.asym;
+  if (!a){
+    el.innerHTML = `<div class="panel cage" style="grid-column:1/-1">PROTOTYPE STRATEGY OFFLINE — config.asym.json not found (or dashboard server predates it).<span class="jp">試作機未配備</span></div>`;
+    return;
+  }
+
+  const ex = a.exits;
+  const tpTxt = ex.take_profits.map(t =>
+    t.multiple + 'x → bank ' + Math.round(t.sell_fraction_of_remaining*100) + '%').join(', ') || 'none';
+  let lockTxt = '—';
+  const tp1 = ex.take_profits[0];
+  if (tp1 && tp1.sell_fraction_of_remaining > 0){
+    const f = tp1.sell_fraction_of_remaining, m = tp1.multiple;
+    const floor = f*m + (1-f)*m*(1 - ex.trailing_stop_pct/100);
+    lockTxt = '≈' + floor.toFixed(2) + 'x pre-cost once TP1 banks';
+  }
+  const en = a.entry;
+  const sf = a.backtest && a.backtest.sample && a.backtest.sample.setup_filter;
+  let entryBody;
+  if (!en){
+    entryBody = `<div class="cage">ENTRY CONFIG NOT SERVED — restart dashboard server<span class="jp">要再起動</span></div>`;
+  } else {
+    const s = en.signal, f = en.funnel, sa = en.safety;
+    entryBody =
+      kv('5M CHANGE WINDOW', s.min_chg_m5_pct + '% … +' + s.max_chg_m5_pct + '% (flat base ok, no spike-chasing)') +
+      kv('1H CHANGE FLOOR', '≥ ' + s.min_chg_h1_pct + '% (no collapsed charts)') +
+      kv('BUY/SELL EDGE', '≥ ' + s.min_buy_sell_edge + '× (5m buys vs sells)') +
+      kv('LIQUIDITY', '$' + bdFmt(f.min_liquidity_usd) + ' – $' + bdFmt(f.max_liquidity_usd)) +
+      kv('POOL AGE', f.min_age_min + 'm – ' + Math.round(f.max_age_min / 60) + 'h') +
+      kv('5M FLOW', '≥ $' + bdFmt(f.min_vol_m5_usd) + ' vol · ≥ ' + f.min_sells_m5 + ' sells · b/s ≤ ' + f.max_buy_sell_ratio) +
+      kv('FDV / LIQUIDITY', '≤ ' + f.max_fdv_to_liquidity + '×') +
+      kv('SAFETY', 'rugcheck ≤ ' + sa.max_rugcheck_score + ' · insiders ≤ ' + sa.max_insider_pct + '% · snipers ≤ ' + sa.max_sniper_pct + '% · top10 ≤ ' + sa.max_top10_pct + '%') +
+      kv('HOLDERS', '≥ ' + sa.min_holders + ' · creator ≤ ' + sa.max_creator_pct + '% · bundlers ≤ ' + sa.max_bundlers) +
+      (sf ? kv('BASE-ENTRY FILTER', `${sf.base_window_min}m range ≤${sf.max_base_range_pct}% · ≤${sf.max_nukes} nuke · ≥${Math.round(sf.min_frac_of_peak*100)}% of peak · ${sf.trend_window_min}m trend ${sf.trend_lo}–${sf.trend_hi}x`) : '');
+  }
+  const entryPanel = `<div class="panel">
+    <div class="ptab"><span>ENTRY DOCTRINE</span><span class="verdict ok">GATED 選別</span></div>
+    <div class="pbody">${entryBody}</div></div>`;
+
+  const doctrine = `<div class="panel">
+    <div class="ptab"><span>EXIT DOCTRINE</span><span class="verdict ${a.running ? 'ok' : 'warn'}">${a.running ? 'ACTIVE 出撃' : 'IN CAGE 待機'}</span></div>
+    <div class="pbody">` +
+    kv('STOP LOSS', '-' + ex.stop_loss_pct + '%') +
+    kv('TP LADDER', tpTxt) +
+    kv('TRAILING', '-' + ex.trailing_stop_pct + '% off peak (armed after TP1)') +
+    kv('HARD TARGET', ex.hard_tp_multiple + 'x') +
+    kv('TIME STOP', ex.max_hold_min + 'm') +
+    kv('LOCKED FLOOR', lockTxt) +
+    kv('ISOLATION', 'own db + log — never mixes with main portfolio') +
+    `</div></div>`;
+
+  const bt = a.backtest;
+  let btBody, btVerdict = `<span class="verdict warn">NO DATA</span>`;
+  if (!bt || !bt.overall){
+    btBody = `<div class="cage">AWAITING BACKTEST TELEMETRY<span class="jp">python backtest.py で生成</span></div>`;
+  } else {
+    const fair = bt.fair || (bt.cohorts && bt.cohorts.pump) || bt.overall;
+    const fairLbl = bt.fair ? 'FAIR (DB+PUMP+NEW)' : (bt.cohorts && bt.cohorts.pump ? 'PUMP (FAIR)' : 'ALL COHORTS');
+    const tr = bt.cohorts && bt.cohorts.trending;
+    const wrFrac = Math.min(1, fair.wr / 60);
+    const gainFrac = Math.max(0, Math.min(1, (fair.avg - 1) / 1.0));
+    const hit = fair.wr >= 60 && fair.avg >= 2.0;
+    btVerdict = hit ? `<span class="verdict ok">TARGET MET</span>` : `<span class="verdict warn">BELOW TARGET</span>`;
+    const sample = (bt.sample ? bt.sample.tokens_processed + ' tokens · ' : '') +
+                   (bt.generated_at || '').slice(0, 10) + (bt.note ? ' · ' + bt.note : '');
+    const sf = bt.sample && bt.sample.setup_filter;
+    const sfTxt = sf
+      ? `${sf.base_window_min}m range ≤${sf.max_base_range_pct}% · ≤${sf.max_nukes} nuke · ` +
+        `≥${Math.round(sf.min_frac_of_peak*100)}% of peak · ${sf.trend_window_min}m trend ${sf.trend_lo}–${sf.trend_hi}x`
+      : 'none — every age/vol entry taken';
+    const exp = (fair.avg - 1) * 100;
+    btBody =
+      kv(fairLbl, (fair.n ? `n=${fair.n} · ` : '') + `wr ${fair.wr}% · avg ${fair.avg}x`) +
+      kv('EXPECTANCY', (exp >= 0 ? '+' : '') + exp.toFixed(1) + '%/trade') +
+      kv('ENTRY FILTER', esc(sfTxt)) +
+      kv('ALL COHORTS', (bt.overall.n ? `n=${bt.overall.n} · ` : '') + `wr ${bt.overall.wr}% · avg ${bt.overall.avg}x`) +
+      (tr ? kv('TRENDING (BIASED REF)', `wr ${tr.wr}% · avg ${tr.avg}x`) : '') +
+      kv('WIN RATE vs 60% TARGET', fair.wr + '%') +
+      `<div class="meter"><div class="fill ${fair.wr >= 60 ? '' : 'warn'}" style="width:${(wrFrac*100).toFixed(0)}%"></div></div>` +
+      kv('AVG GAIN vs +100% TARGET', '+' + ((fair.avg - 1)*100).toFixed(0) + '%') +
+      `<div class="meter"><div class="fill ${fair.avg >= 2.0 ? '' : 'warn'}" style="width:${(gainFrac*100).toFixed(0)}%"></div></div>` +
+      kv('SAMPLE', esc(sample));
+  }
+  const backtest = `<div class="panel">
+    <div class="ptab"><span>BACKTEST TELEMETRY</span>${btVerdict}</div>
+    <div class="pbody">${btBody}</div></div>`;
+
+  // one PAPER TRIAL panel per live strategy (BASE/BOUNCE/HOLDER); fall back to
+  // the single base block if the server predates the multi-strategy field.
+  // Archived books are retired from the trial, so they drop out of these panels
+  // entirely. Their tile under SORTIE RECORD stays, and is the way to restore.
+  const strategies = ((st.strategies && st.strategies.length) ? st.strategies
+    : [{key: 'base', label: 'BASE', running: a.running, paper: a.paper, exits: a.exits}])
+    .filter(s => !s.archived);
+  const paperPanel = (s) => {
+    const p = s.paper, running = s.running, ex2 = s.exits || {};
+    const tp0 = ex2.take_profits && ex2.take_profits[0] ? ex2.take_profits[0].multiple : '?';
+    const doc = ex2.stop_loss_pct != null
+      ? `<div style="color:var(--ink3);font-size:10px;letter-spacing:1px;margin-bottom:7px">`
+        + `STOP -${ex2.stop_loss_pct}% · TP ${tp0}x · TRAIL -${ex2.trailing_stop_pct}% · `
+        + `HARD ${ex2.hard_tp_multiple}x · HOLD ${ex2.max_hold_min}m</div>`
+      : '';
+    let body;
+    if (!p){
+      body = running
+        ? `<div class="cage">BOT STARTING — FIRST CYCLE CREATES THE LEDGER<span class="jp">起動中</span></div>`
+        : `<div class="cage">NOT DEPLOYED — run.py --config config.${s.key === 'base' ? 'asym' : s.key}.json<span class="jp">実戦データなし</span></div>`;
+    } else {
+      const pnlCls = p.total_pnl_sol > 0 ? 'pos' : p.total_pnl_sol < 0 ? 'neg' : '';
+      const openRows = (p.open_rows || []).map(o =>
+        kv('OPEN · ' + esc(o.symbol),
+           `${o.multiple === null ? 'quote…' : o.multiple.toFixed(2) + 'x'} · peak ${o.peak}x · ` +
+           `${o.age_min}m · ${o.spent_sol} SOL · token fees ${fmtTokenFee(o.token_fees)}`)).join('');
+      const orderRows = (p.orders || []).map(o =>
+        `<tr><td>${esc(String(o.ts || '').slice(5, 16).replace('T', ' '))}</td>
+          <td><span class="${o.side === 'buy' ? 'pos' : 'neg'}">${esc(o.side.toUpperCase())}</span></td>
+          <td>${esc(o.symbol)}</td><td class="num">${o.sol.toFixed(4)}</td>
+          <td class="num" style="color:var(--ink3)">${fmtFee(o.fee_sol)}</td>
+          <td>${esc(o.note || '')}</td></tr>`).join('');
+      const balCls = p.balance_sol > p.start_sol ? 'pos' : p.balance_sol < p.start_sol ? 'neg' : '';
+      body = doc +
+        kv('PAPER BALANCE', `<span class="${balCls}" style="font-weight:bold">${p.balance_sol.toFixed(4)}</span> SOL` +
+           ` <span style="color:var(--ink3)">· start ${p.start_sol.toFixed(2)}${p.balance_est ? ' · ~quote pending' : ''}</span>`) +
+        balActs(s.key, p.start_sol) +
+        kv('UNITS DEPLOYED', String(p.open)) +
+        kv('SORTIES CLOSED', String(p.count)) +
+        kv('WIN RATE', p.win_rate === null ? '—' : p.win_rate + '%') +
+        kv('AVG MULTIPLE', p.avg_multiple === null ? '—' : p.avg_multiple + 'x') +
+        kv('TOTAL PNL', `<span class="${pnlCls}">${fmtSol(p.total_pnl_sol, true)}</span> SOL` +
+           ` <span style="color:var(--ink3)">· net of our ${fmtFee(p.fees_sol)} swap cost</span>`) +
+        (p.voided ? kv('VOIDED (RUGS)',
+           `<span class="neg">${p.voided}</span> position${p.voided === 1 ? '' : 's'} · ` +
+           `<span class="neg">−${p.voided_sol.toFixed(4)}</span> SOL sunk ` +
+           `<span style="color:var(--ink3)">· unsellable, excluded from pnl &amp; win rate</span>`) : '') +
+        openRows +
+        `<div style="margin-top:9px;color:var(--ink3);letter-spacing:2px;font-size:10.5px">PAPER ORDERS — LATEST FILLS</div>
+         <table style="margin-top:4px"><thead><tr><th>TIME</th><th>SIDE</th><th>UNIT</th><th>SOL</th><th title="what WE paid on this fill, already inside the SOL amount">OUR FEE</th><th>NOTE</th></tr></thead>
+         <tbody>${orderRows || '<tr><td colspan="6" class="empty-row">NO ORDERS YET — SCANNING FOR ENTRIES</td></tr>'}</tbody></table>` +
+        gateTable(st, s.label);
+    }
+    return `<div class="panel">
+      <div class="ptab"><span>PAPER TRIAL · ${esc(s.label)} ${stratChip(s.label)}</span><span class="verdict ${running ? 'ok' : 'warn'}">${running ? 'ACTIVE 稼働' : 'STANDBY 待機'}${p ? ' · ' + p.count + ' SORTIES' : ''}</span></div>
+      <div class="pbody">${body}</div></div>`;
+  };
+
+  el.innerHTML = entryPanel + doctrine + backtest + strategies.map(paperPanel).join('');
+}
+
+function renderUpdates(st){
+  const rows = (st.updates || []).slice().reverse();
+  $('updates').innerHTML = rows.map(u =>
+    `<tr><td style="white-space:nowrap">${esc(u.ts)}</td><td>${esc(u.title)}</td>
+     <td style="color:var(--ink2)">${esc(u.impact)}</td></tr>`).join('') ||
+    '<tr><td colspan="3" class="empty-row">NO UPDATES LOGGED</td></tr>';
+  const c = $('upd-count');
+  if (c) c.textContent = rows.length ? `  ·  ${rows.length} ENTRIES` : '';
+}
+
+function renderWallets(st){
+  const w = st.wallets;
+  const badge = $('wallets-badge'), body = $('wallets-body');
+  if (!w){
+    badge.textContent = 'NO DATA'; badge.className = 'verdict warn';
+    body.innerHTML = '<div class="empty-row">HARVESTER OFFLINE OR NO SIGHTINGS YET — WALLETS ACCUMULATE ON EVERY DEEP CHECK</div>';
+    return;
+  }
+  badge.textContent = `${w.wallets} WALLETS · ${w.tokens} TOKENS`;
+  badge.className = 'verdict ok';
+  const top = (w.top || []).map(t =>
+    `<tr><td style="font-family:monospace">${esc(t.wallet.slice(0,4))}…${esc(t.wallet.slice(-4))}` +
+    (t.tracked ? ` <span style="color:var(--amber)">★${esc(t.tracked)}</span>` : '') + `</td>` +
+    `<td>${t.mints}</td><td>${t.sightings}</td>` +
+    `<td style="color:var(--ink3)">${esc((t.symbols || '').split(',').slice(0,4).join(', '))}</td></tr>`).join('');
+  const hits = (w.tracked_hits || []).map(h =>
+    `<tr><td style="white-space:nowrap">${esc((h.ts || '').slice(0,16))}</td><td style="color:var(--amber)">★${esc(h.name || '?')}</td><td>${esc(h.symbol || '?')}</td></tr>`).join('');
+  body.innerHTML =
+    kv('SIGHTINGS LOGGED', String(w.sightings)) +
+    kv('TRACKED WATCHLIST', `${w.tracked_count} wallets · reports/tracked_wallets.json (edit any time, no restart)`) +
+    `<div style="margin-top:9px;color:var(--ink3);letter-spacing:2px;font-size:10.5px">MOST-SEEN WALLETS — BY DISTINCT TOKENS</div>
+     <table style="margin-top:4px"><thead><tr><th>WALLET</th><th>TOKENS</th><th>SEEN</th><th>ON</th></tr></thead>
+     <tbody>${top || '<tr><td colspan="4" class="empty-row">NO SIGHTINGS YET</td></tr>'}</tbody></table>` +
+    (hits ? `<div style="margin-top:9px;color:var(--ink3);letter-spacing:2px;font-size:10.5px">TRACKED-WALLET HITS — LATEST</div>
+     <table style="margin-top:4px"><thead><tr><th>TIME (UTC)</th><th>NAME</th><th>TOKEN</th></tr></thead><tbody>${hits}</tbody></table>` : '') +
+    kv('NOTE', 'observational — annotates ENTER lines, never gates an entry');
+}
+
+/* ---- rejection airlock: animate each real reject event exactly once ----
+   The feed is merged across every live strategy (BASE/BOUNCE/HOLDER/HOMERUN);
+   each gets its own lane + colour, and the ticker below keeps the last events
+   on screen because the animation stage is empty between rejects. */
+const GATE_LABELS = {setup:'BASE-ENTRY', bounce:'BOUNCE-ENTRY', moonshot:'MOONSHOT', screen:'SCREEN',
+                     human:'HUMAN', insiders:'INSIDERS', smart_money:'SMART MONEY', rugcheck:'RUGCHECK',
+                     roundtrip:'ROUNDTRIP', other:'GATE'};
+const REJ_H = 118;
+const stratCls = l => 'sc-' + String(l || 'other').toLowerCase();
+const rejKey = r => r.ts + '|' + r.strategy + '|' + r.symbol + '|' + r.cat;
+const rejSeen = new Set();
+let rejQueue = [], rejPumping = false, rejFirstLoad = true, rejLaneTop = {};
+
+function renderRejFx(st){
+  const rj = st.rejects || {};
+  const rec = rj.recent || [];
+  rejRail(rj);
+  rejTicker(rj);
+  for (const r of rec){
+    const k = rejKey(r);
+    if (rejSeen.has(k)) continue;
+    rejSeen.add(k);
+    if (!rejFirstLoad) rejQueue.push(r);
+  }
+  if (rejFirstLoad){ rejQueue.push(...rec.slice(-3)); rejFirstLoad = false; }
+  // the dashboard stays open for days — keep the dedup set from growing forever
+  if (rejSeen.size > 4000){ rejSeen.clear(); rec.forEach(r => rejSeen.add(rejKey(r))); }
+  rejQueue = rejQueue.slice(-8);
+  rejPump();
+}
+
+/* Left rail: one labelled lane per strategy that is actually rejecting. */
+function rejRail(rj){
+  const rail = $('rejrail'), ss = rj.strategies || [];
+  const sig = ss.map(s => s.label + ':' + s.n).join(',');
+  $('rejempty').style.display = ss.length ? 'none' : '';
+  const badge = $('rejbadge');
+  if (badge) badge.textContent = ss.length ? `${rj.window_n} REJECTS · ${ss.length} STRAT` : '拒否';
+  if (rail.dataset.sig === sig) return;
+  rail.dataset.sig = sig;
+  rejLaneTop = {};
+  rail.innerHTML = ss.map((s, i) => {
+    const top = ss.length < 2 ? (REJ_H - 30) / 2 : 10 + i * (REJ_H - 40) / (ss.length - 1);
+    rejLaneTop[s.label] = top;
+    return `<div class="lane ${stratCls(s.label)}" style="top:${top}px">${esc(s.label)}<i>${s.n} REJ</i></div>`;
+  }).join('');
+}
+
+/* Persistent list of the last merged rejects, newest first. */
+function rejTicker(rj){
+  const el = $('rejtick');
+  const rows = (rj.recent || []).slice().reverse().slice(0, 8);
+  const tally = (rj.strategies || []).map(s =>
+    `<span class="tg ${stratCls(s.label)}">${esc(s.label)} ${s.n}</span>`).join('  ·  ');
+  el.innerHTML =
+    `<div class="hdr"><span>LATEST FILTERED — ALL STRATEGIES</span><span>${tally || '—'}</span></div>` +
+    (rows.map(r =>
+      `<div class="rt"><span class="t">${esc((r.ts || '').slice(11, 19))}</span>
+        <span class="s ${stratCls(r.strategy)}">${esc(r.strategy || '—')}</span>
+        <span class="sym">${esc(r.symbol)}</span>
+        <span class="why" title="${esc(r.reason || '')}"><em>✕ ${esc(GATE_LABELS[r.cat] || 'GATE')}</em> — ${esc(r.reason || '')}</span></div>`
+     ).join('') || '<div class="empty-row">NO REJECTS IN THE CURRENT LOG WINDOW</div>');
+}
+
+function rejPump(){
+  if (rejPumping) return;
+  rejPumping = true;
+  (function next(){
+    const r = rejQueue.shift();
+    if (!r){ rejPumping = false; return; }
+    rejSpawn(r);
+    setTimeout(next, 950);
+  })();
+}
+
+function rejSpawn(r){
+  const stage = $('rejfx');
+  if (!stage) return;
+  const el = document.createElement('div');
+  el.className = 'rchip ' + stratCls(r.strategy);
+  const lane = rejLaneTop[r.strategy];
+  el.style.top = (lane === undefined ? 10 + Math.random() * 70 : lane) + 'px';
+  el.innerHTML = `<span class="rstrat">${esc(r.strategy || '?')}</span><b>${esc(r.symbol)}</b>` +
+                 `<span class="rgate">✕ ${GATE_LABELS[r.cat] || 'GATE'}</span>` +
+                 `<span class="stamp">REJECTED</span>`;
+  stage.appendChild(el);
+  // measure once attached: travel to the gate line, whatever the chip's width
+  el.style.setProperty('--d',
+    Math.max(90, stage.clientWidth * 0.58 - el.offsetLeft - el.offsetWidth - 8) + 'px');
+  el.addEventListener('animationend', ev => { if (ev.target === el) el.remove(); });
+}
+
+/* Gate breakdown. With a strategy label, counts/last are that strategy's own
+   slice of the merged feed; without one, the all-strategy totals. */
+function gateTable(st, strat){
+  const rj = st.rejects || {};
+  const cats = [['setup','BASE-ENTRY SETUP'],['bounce','BOUNCE ENTRY'],['moonshot','MOONSHOT SCREEN'],
+                ['human','HUMAN'],['insiders','INSIDERS'],['smart_money','SMART MONEY'],
+                ['rugcheck','RUGCHECK'],['roundtrip','ROUNDTRIP COST'],['other','OTHER']];
+  const rows = cats.map(([k, label]) => {
+    const c = rj[k];
+    const src = !c ? null : strat ? (c.by || {})[strat] : c;
+    return [label, src];
+  }).filter(([, src]) => src && src.n).map(([label, src]) =>
+    `<tr><td>${label}</td><td class="num">${src.n}</td><td>${esc(src.last_symbol)}</td>` +
+    `<td style="color:var(--ink3)" title="${esc(src.last_reason)}">${esc(src.last_reason).slice(0, 36)}</td></tr>`
+  ).join('');
+  return `<div style="margin-top:9px;color:var(--ink3);letter-spacing:2px;font-size:10.5px">REJECTION GATES${strat ? ' — ' + esc(strat) : ''} · RECENT LOG WINDOW</div>
+    <table style="margin-top:4px"><thead><tr><th>GATE</th><th>N</th><th>LAST</th><th>REASON</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="4" class="empty-row">NO REJECTS IN THE CURRENT LOG WINDOW</td></tr>'}</tbody></table>`;
+}
+
+function stratChip(key){
+  const k = String(key || 'BASE').toUpperCase();
+  const cls = k.startsWith('BASE') ? 'good' : k.startsWith('H') ? 'info'
+    : k.startsWith('V') ? 'warn' : 'crit';
+  return `<span class="chip ${cls}" style="font-size:9.5px;padding:1px 5px">${esc(k)}</span>`;
+}
+
+function sortieRow(r, strat){
+  const cls = r.pnl_sol > 0 ? 'pos' : r.pnl_sol < 0 ? 'neg' : '';
+  // Only LIVE rows carry book+id (they come from a ledger). Backtest rows are
+  // resampled pool trades with no position row behind them, so they stay inert
+  // rather than opening a view that would 404.
+  const clickable = r.book && r.id != null;
+  const attrs = clickable
+    ? ` class="srow" data-book="${esc(r.book)}" data-id="${r.id}" title="click for the contract address and chart"`
+    : '';
+  return `<tr${attrs}><td>${esc(r.closed_at || '')}</td><td>${esc(r.symbol)}${clickable ? ' <span class="mag">&#9656;</span>' : ''}</td>
+    <td>${stratChip(strat || r.strategy)}</td>
+    <td class="num">${r.multiple.toFixed(2)}x</td>
+    <td class="num"><span class="${cls}">${fmtSol(r.pnl_sol, true)}</span></td>
+    <td class="num" style="color:var(--ink3)">${fmtTokenFee(r.token_fees)}</td>
+    <td>${esc(r.reason)}</td></tr>`;
+}
+
+/* ---------- trade detail: CA + candles ---------- */
+function tradeChart(rows, openedAt, closedAt){
+  if (!rows || rows.length < 2) return '';
+  const W = 860, PH = 240, VH = 54, PAD = 34, H = PH + VH + 26;
+  const lo = Math.min(...rows.map(r => r[3])), hi = Math.max(...rows.map(r => r[2]));
+  const span = (hi - lo) || hi || 1;
+  const vmax = Math.max(...rows.map(r => r[5])) || 1;
+  const n = rows.length;
+  const cw = Math.max(2, (W - PAD * 2) / n);
+  const x = i => PAD + i * cw;
+  const y = p => 8 + (hi - p) / span * (PH - 16);
+  const tsOf = s => { const d = Date.parse(s); return isNaN(d) ? null : d / 1000; };
+  const oTs = tsOf(openedAt), cTs = tsOf(closedAt);
+  let body = '';
+  rows.forEach((r, i) => {
+    const [ts, o, h, l, c, v] = r;
+    const up = c >= o, col = up ? '#3fdc7f' : '#ff4d4d';
+    const cx = x(i) + cw / 2;
+    const yo = y(o), yc = y(c);
+    body += `<line x1="${cx.toFixed(1)}" y1="${y(h).toFixed(1)}" x2="${cx.toFixed(1)}" y2="${y(l).toFixed(1)}" stroke="${col}" stroke-width="1"/>`;
+    body += `<rect x="${x(i).toFixed(1)}" y="${Math.min(yo,yc).toFixed(1)}" width="${Math.max(1.2, cw*0.72).toFixed(1)}" height="${Math.max(1, Math.abs(yc-yo)).toFixed(1)}" fill="${col}"/>`;
+    const vh2 = (v / vmax) * (VH - 6);
+    body += `<rect x="${x(i).toFixed(1)}" y="${(PH + VH - vh2).toFixed(1)}" width="${Math.max(1.2, cw*0.72).toFixed(1)}" height="${vh2.toFixed(1)}" fill="${up ? '#1f6b45' : '#6b2020'}"/>`;
+  });
+  // entry / exit markers, placed on the candle whose minute contains them
+  const mark = (ts, col, txt) => {
+    if (ts == null) return '';
+    let idx = -1;
+    for (let i = 0; i < n; i++) if (rows[i][0] <= ts) idx = i;
+    if (idx < 0) return '';
+    const cx = x(idx) + cw / 2;
+    return `<line x1="${cx.toFixed(1)}" y1="4" x2="${cx.toFixed(1)}" y2="${PH}" stroke="${col}" stroke-width="1" stroke-dasharray="3 3"/>
+      <text x="${(cx+3).toFixed(1)}" y="14" fill="${col}" font-size="10">${txt}</text>`;
+  };
+  const axis = `<text x="4" y="12" fill="#6a6a7a" font-size="10">${fmtPx(hi)}</text>
+    <text x="4" y="${(PH-4)}" fill="#6a6a7a" font-size="10">${fmtPx(lo)}</text>
+    <text x="4" y="${(PH+VH-2)}" fill="#6a6a7a" font-size="9">vol</text>`;
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet">
+    <rect width="${W}" height="${H}" fill="#0b0b12"/>${axis}${body}
+    ${mark(oTs, '#7fc9e8', 'ENTRY')}${mark(cTs, '#ffc233', 'EXIT')}</svg>`;
+}
+
+function closeTrade(){ const m = $('tradeModal'); if (m) m.style.display = 'none'; }
+
+async function openTrade(book, id){
+  const m = $('tradeModal'), b = $('tradeBody');
+  if (!m) return;
+  m.style.display = 'flex';
+  b.innerHTML = `<div class="tload">LOADING TRADE #${esc(id)}…</div>`;
+  let d;
+  try {
+    const res = await fetch('/api/trade?book=' + encodeURIComponent(book) + '&id=' + encodeURIComponent(id));
+    d = await res.json();
+    if (d.error) throw new Error(d.error);
+  } catch (e) {
+    b.innerHTML = `<div class="tload bad">could not load trade: ${esc(e.message)}</div>`;
+    return;
+  }
+  const pc = d.pnl_sol > 0 ? 'pos' : d.pnl_sol < 0 ? 'neg' : '';
+  const chart = d.candles_available ? tradeChart(d.candles, d.opened_at, d.closed_at)
+    : `<div class="nochart">NO CANDLES FOR THIS TRADE — the websocket store is a rolling
+       live window (<code>${esc(d.candles_source)}</code>), not an archive, so candles for
+       older trades have been evicted. This is missing data, not a flat price.</div>`;
+  const fills = (d.fills || []).map(f =>
+    `<tr><td>${esc((f.ts||'').replace('T',' ').replace('Z',''))}</td>
+      <td class="${f.side === 'buy' ? 'neg' : 'pos'}">${esc(f.side)}</td>
+      <td class="num">${f.sol.toFixed(4)}</td>
+      <td class="num" style="color:var(--ink3)">${fmtFee(f.fee_sol)}</td>
+      <td>${esc(f.note)}</td></tr>`).join('');
+  b.innerHTML = `
+    <div class="thead">
+      <span class="tsym">${esc(d.symbol)}</span>
+      ${stratChip(d.label)}
+      <span class="chip ${pc}">${d.multiple.toFixed(3)}x</span>
+      <span class="chip ${pc}">${fmtSol(d.pnl_sol, true)} SOL</span>
+      <span class="chip">${esc(d.reason || d.status)}</span>
+      <button class="tclose" onclick="closeTrade()">CLOSE ✕</button>
+    </div>
+    <div class="carow">
+      <span class="calbl">CA</span>
+      <code id="caval" class="caval">${esc(d.mint || '—')}</code>
+      <button class="btn2" onclick="navigator.clipboard.writeText('${esc(d.mint||'')}').then(()=>{this.textContent='COPIED';setTimeout(()=>this.textContent='COPY',1200);})">COPY</button>
+      <a class="btn2" target="_blank" rel="noopener" href="https://solscan.io/token/${esc(d.mint||'')}">SOLSCAN</a>
+      <a class="btn2" target="_blank" rel="noopener" href="https://dexscreener.com/solana/${esc(d.mint||'')}">DEXSCREENER</a>
+      <a class="btn2" target="_blank" rel="noopener" href="https://birdeye.so/token/${esc(d.mint||'')}?chain=solana">BIRDEYE</a>
+    </div>
+    ${chart}
+    <div class="tgrid">
+      <div><span>opened</span><b>${esc((d.opened_at||'').replace('T',' ').replace('Z',''))}</b></div>
+      <div><span>closed</span><b>${esc((d.closed_at||'').replace('T',' ').replace('Z',''))}</b></div>
+      <div><span>spent</span><b>${d.spent_sol.toFixed(4)} SOL</b></div>
+      <div><span>received</span><b>${d.received_sol.toFixed(4)} SOL</b></div>
+      <div title="total SOL network fees across EVERY transaction involving this token, by every trader. Estimated: exact tx count x sampled mean fee. Not our cost."><span>token fees (global)</span><b>${fmtTokenFee(d.token_fees)} SOL${d.token_fees && !d.token_fees.pending ? ` <span style="color:var(--ink3)">· ${d.token_fees.txs.toLocaleString()} txs</span>` : ''}</b></div>
+      <div title="what WE paid in swap fees on this trade — already inside spent/received, so the PNL above is net of it"><span>our swap cost</span><b>${fmtFee(d.fees_sol)} SOL${d.fees_pct_of_spent != null ? ` <span style="color:var(--ink3)">· ${d.fees_pct_of_spent}% of spent</span>` : ''}</b></div>
+      <div><span>peak</span><b>${(d.peak_multiple||0).toFixed(2)}x</b></div>
+      <div><span>TP stage</span><b>${d.tp_stage}</b></div>
+      <div><span>stop / cap</span><b>${d.exits.stop_loss_pct}% / ${d.exits.hard_tp_multiple}x</b></div>
+      <div><span>max hold</span><b>${d.exits.max_hold_min}m</b></div>
+    </div>
+    ${fills ? `<table class="tfills"><thead><tr><th>fill</th><th>side</th><th>SOL</th><th title="what WE paid on this leg — the buy amount includes it, each sell amount is net of it">our fee</th><th>note</th></tr></thead><tbody>${fills}</tbody></table>
+      <div style="color:var(--ink3);font-size:10.5px;margin-top:5px">OUR fee is charged per fill at ${fmtFee(d.fee_per_fill_sol)} SOL and is already reflected in the
+        SOL column — the PNL above is net of it. TOKEN FEES above is a different thing entirely: the
+        whole market's network fees on this coin, estimated as exact tx count x sampled mean fee.</div>` : ''}`;
+}
+
+document.addEventListener('click', e => {
+  const tr = e.target.closest && e.target.closest('tr.srow');
+  if (tr) { openTrade(tr.dataset.book, tr.dataset.id); return; }
+  if (e.target && e.target.id === 'tradeModal') closeTrade();
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeTrade(); });
+
+function renderStrategies(st){
+  const el = $('stratlab');
+  const lab = st.strategy_lab;
+  if (!lab || !lab.strategies || !lab.strategies.length){
+    el.innerHTML = `<div class="panel cage">STRATEGY LAB EMPTY — RUN: python freshlab.py --run
+      <span class="jp">戦術評価待機中</span></div>`;
+    return;
+  }
+  const by = {};
+  lab.strategies.forEach(s => by[s.key] = s);
+  const heads = [
+    ['BASE-EA', 'BASE-ENTRY', 'LIVE — the strategy the paper bot trades'],
+    ['V1',      'VOL/MC CHURN', 'RESEARCH — volume > market cap screen'],
+    ['H1-EA',   'HOLDER DIST', 'RESEARCH — distributed-holders gate'],
+  ];
+  const cards = heads.map(([key, name, sub]) => {
+    const s = by[key];
+    const p = s && s.pooled;
+    const cls = !p ? '' : p.avg >= 1 ? 'pos' : 'neg';
+    const chip = key === 'BASE-EA' ? '<span class="chip good">▰ LIVE</span>'
+                                   : '<span class="chip warn">▲ RESEARCH</span>';
+    return `<div class="panel tile"><div class="lbl">${name} ${chip}</div>
+      <div class="big ${cls}">${p ? p.avg.toFixed(2) + 'x' : '—'}</div>
+      <div class="sub">${p ? `wr ${p.wr}% · med ${p.med}x · n=${p.n} (fresh OOT)` : 'no trades'}<br>${sub}</div></div>`;
+  }).join('');
+  const rows = lab.strategies.map(s => {
+    const p = s.pooled, t = s.train, v = s.valid;
+    const cls = p && p.avg >= 1 ? 'pos' : 'neg';
+    return `<tr><td>${stratChip(s.key)}</td><td>${esc(s.label)}</td>
+      <td class="num"><span class="${cls}">${p ? p.avg.toFixed(3) + 'x' : '—'}</span></td>
+      <td class="num">${p ? p.wr.toFixed(0) + '%' : '—'}</td>
+      <td class="num">${p ? p.med.toFixed(2) : '—'}</td>
+      <td class="num">${p ? p.n : 0}</td>
+      <td class="num">${t ? t.avg.toFixed(2) + '/' + t.n : '—'}</td>
+      <td class="num">${v ? v.avg.toFixed(2) + '/' + v.n : '—'}</td></tr>`;
+  }).join('');
+  el.innerHTML = `<div class="tiles" style="margin-bottom:14px">${cards}</div>
+    <div class="panel"><div class="ptab"><span>FRESH OUT-OF-TIME SAMPLE — ENGINE V5, PRE-REGISTERED</span>
+      <span class="verdict warn">${lab.sample ? lab.sample.tokens_with_candles + ' TOKENS' : ''}</span></div>
+    <div class="pbody"><table><thead><tr><th>KEY</th><th>CONFIG</th><th style="text-align:right">AVG</th>
+      <th style="text-align:right">WR</th><th style="text-align:right">MED</th><th style="text-align:right">N</th>
+      <th style="text-align:right">TRAIN</th><th style="text-align:right">VALID</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+      <div style="margin-top:8px;color:var(--ink3);font-size:10.5px;letter-spacing:1px">
+        HONEST FILLS · DEAD-TOKEN REMAINDERS = 0 · 4% COST · SAMPLE NEVER USED FOR TUNING</div></div></div>`;
+}
+
+/* SORTIE LOG view tabs: LIVE PAPER <-> BACKTEST. Explicit pick sticks (and
+   survives reloads via localStorage); before any pick, auto-prefer live
+   closes and fall back to the backtest journal — the old behavior. */
+let sortieTab = localStorage.getItem('sortieTab') || null;
+let sortieSt = null;
+function setSortieTab(t){
+  sortieTab = t;
+  try{ localStorage.setItem('sortieTab', t); }catch(e){}
+  if (sortieSt) renderSorties(sortieSt);
+}
+
+function renderSorties(st){
+  sortieSt = st;
+  const rows = (st.live_sorties && st.live_sorties.length) ? st.live_sorties
+    : (st.closed && st.closed.recent) || [];
+  const bt = st.backtest_sorties || [];
+  const view = sortieTab || (rows.length ? 'live' : (bt.length ? 'backtest' : 'live'));
+  const tl = $('tab-live'), tb = $('tab-bt');
+  if (tl) tl.className = 'verdict stab ' + (view === 'live' ? 'ok' : 'off');
+  if (tb) tb.className = 'verdict stab ' + (view === 'backtest' ? 'warn' : 'off');
+  if (view === 'live'){
+    $('sorties').innerHTML = rows.length ? rows.map(r => sortieRow(r, r.strategy || 'BASE')).join('')
+      : `<tr><td colspan="7" class="empty-row">NO COMPLETED SORTIES YET</td></tr>`;
+  } else {
+    $('sorties').innerHTML = bt.length ? bt.map(r => sortieRow(r, r.strategy || 'BASE')).join('') +
+      `<tr><td colspan="7" style="color:var(--ink3);font-size:10.5px;padding:7px 8px">
+        ${esc(st.backtest_strategy || 'backtest journal (simulated fills)')} — simulated fills ·
+        TOKEN FEES read <b>…</b> for backtest rows: they are resampled pool trades with no mint behind
+        them, so there is no token to price. ·
+        <a href="trades.html" style="color:var(--cyan)">full trade journal →</a></td></tr>`
+      : `<tr><td colspan="7" class="empty-row">NO BACKTEST JOURNAL YET — run: python tradecards.py</td></tr>`;
+  }
+}
+$('tab-live').addEventListener('click', () => setSortieTab('live'));
+$('tab-bt').addEventListener('click', () => setSortieTab('backtest'));
+
+/* Collapsible panels: the header bar toggles its own .pbody. These two default
+   collapsed (long, reference-only); the choice sticks across reloads and the 5s
+   refresh via localStorage. Header badges stay visible while collapsed. */
+function wireCollapse(panelId, tabId, key){
+  const p = $(panelId), t = $(tabId);
+  const set = open => {
+    p.classList.toggle('collapsed', !open);
+    t.setAttribute('aria-expanded', open ? 'true' : 'false');
+    try{ localStorage.setItem(key, open ? '1' : '0'); }catch(e){}
+  };
+  set(localStorage.getItem(key) === '1');
+  t.addEventListener('click', () => set(p.classList.contains('collapsed')));
+  t.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); t.click(); }
+  });
+}
+wireCollapse('upd-panel', 'upd-tab', 'updatesOpen');
+wireCollapse('wal-panel', 'wal-tab', 'walletsOpen');
+
+function renderTerm(st){
+  const t = $('term');
+  const stick = t.scrollTop + t.clientHeight >= t.scrollHeight - 8;
+  t.innerHTML = st.log_tail.map(l => {
+    const cls = /ERROR|Traceback|CRITICAL/.test(l) ? 'err' : /WARNING/.test(l) ? 'warn' : '';
+    return `<div class="${cls}">${esc(l)}</div>`;
+  }).join('') || '<div>-- no log output yet --</div>';
+  if (stick) t.scrollTop = t.scrollHeight;
+}
+
+function render(st){
+  const live = st.mode === 'live';
+  const badge = $('mode-badge');
+  badge.className = 'badge ' + (live ? 'live' : 'sim');
+  badge.textContent = live ? '⚠ COMBAT MODE — LIVE FUNDS' : 'SIMULATION MODE — PAPER';
+  $('foot-mode').textContent = live ? '⚠ COMBAT MODE — REAL FUNDS AT RISK' : 'SIMULATION — NO REAL FUNDS AT RISK';
+  renderAlert(st); renderMagi(st); renderUnits(st); renderTiles(st); renderStrategies(st); renderOps(st); renderAsym(st); renderSorties(st); renderTerm(st); renderRejFx(st); renderUpdates(st); renderWallets(st);
+}
+
+async function refresh(){
+  try{
+    const r = await fetch('data/state.json?t=' + Date.now(), {cache:'no-store'});
+    if (!r.ok) throw new Error('http ' + r.status);
+    render(await r.json());
+    $('led').className = ''; $('led-txt').textContent = 'LINK ESTABLISHED';
+  }catch(e){
+    $('led').className = 'bad'; $('led-txt').textContent = 'SIGNAL LOST — RETRYING';
+  }
+}
+refresh(); setInterval(refresh, 5000);
+
+/* chart hover tooltips (sparkline + candle minichart) */
+const tip = $('tip');
+function showTip(e, html){
+  tip.innerHTML = html;
+  tip.style.left = (e.clientX + 14) + 'px';
+  tip.style.top = (e.clientY - 30) + 'px';
+  tip.style.display = 'block';
+}
+document.addEventListener('mousemove', e => {
+  const cnd = e.target.closest && e.target.closest('svg.candle');
+  if (cnd){
+    const rows = cnd.dataset.c.split(';').map(s => s.split('|').map(Number));
+    const rect = cnd.getBoundingClientRect();
+    const idx = Math.max(0, Math.min(rows.length - 1,
+      Math.floor((e.clientX - rect.left) / rect.width * rows.length)));
+    const r = rows[idx], d = new Date(r[0] * 1000), p2 = n => String(n).padStart(2,'0');
+    showTip(e, `${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())} UTC · C ${fmtPx(r[4])}<br>` +
+      `O ${fmtPx(r[1])} H ${fmtPx(r[2])} L ${fmtPx(r[3])} · VOL $${fmtVol(r[5])}`);
+    return;
+  }
+  const svg = e.target.closest && e.target.closest('svg.spark');
+  if (!svg){ tip.style.display = 'none'; return; }
+  const vals = svg.dataset.vals.split(',').map(Number);
+  const rect = svg.getBoundingClientRect();
+  const idx = Math.max(0, Math.min(vals.length - 1,
+    Math.round((e.clientX - rect.left) / rect.width * (vals.length - 1))));
+  showTip(e, esc(vals[idx].toFixed(2) + 'x  (t-' + (vals.length - 1 - idx) + ')'));
+});
+</script>
+<div class="tmodal" id="tradeModal"><div class="tcard" id="tradeBody"></div></div>
+
+<div id="pages-staleness" style="position:fixed;right:10px;bottom:10px;z-index:9999;font:11px monospace;padding:4px 8px;background:#000c;border:1px solid #3f6;color:#3f6;border-radius:3px;">SNAPSHOT --</div>
+<script>
+(function () {
+  var el = document.getElementById('pages-staleness');
+  function tick() {
+    fetch('data/state.json?t=' + Date.now(), {cache: 'no-store'})
+      .then(function (r) { return r.json(); })
+      .then(function (s) {
+        var mins = (Date.now() - Date.parse(s.now)) / 60000;
+        el.textContent = mins < 1.5 ? 'SNAPSHOT LIVE' : 'SNAPSHOT ' + Math.round(mins) + 'm OLD';
+        var c = mins > 12 ? '#f33' : mins > 6 ? '#fc0' : '#3f6';
+        el.style.color = c; el.style.borderColor = c;
+      })
+      .catch(function () { el.textContent = 'SNAPSHOT ?'; });
+  }
+  tick();
+  setInterval(tick, 30000);
+})();
+</script>
+</body>
+</html>

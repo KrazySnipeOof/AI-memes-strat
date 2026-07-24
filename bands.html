@@ -1,0 +1,377 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RETURN BANDS — every book by the multiple it can deliver</title>
+<style>
+  body{background:#0a0a0e;color:#e8e8ea;font-family:"Cascadia Mono",Consolas,monospace;
+       font-size:13px;margin:0;padding:20px 24px 60px}
+  h1{font-size:18px;color:#ff7a1a;letter-spacing:1px;margin:6px 0 2px}
+  .sub{color:#9a9aa8;margin:0 0 14px;font-size:11.5px;line-height:1.7;max-width:1150px}
+  .sub b{color:#e8e8ea}
+  code{color:#ffc233}
+  a{color:#7fc9e8;text-decoration:none}
+  a:hover{text-decoration:underline}
+  .nav{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:8px;
+       background:#0a0a0e;border-bottom:1px solid #2a2a38;margin:-20px -24px 16px;
+       padding:10px 24px;flex-wrap:wrap}
+  .tab{background:#14141d;color:#9a9aa8;border:1px solid #2a2a38;padding:6px 16px;
+       font-size:11px;letter-spacing:1px;text-decoration:none;white-space:nowrap}
+  .tab:hover{color:#e8e8ea;border-color:#5c5c6c;text-decoration:none}
+  .tab.on{color:#ffc233;border-color:#ffc233}
+  /* headline counters */
+  .kpis{display:flex;flex-wrap:wrap;gap:1px;background:#2a2a38;border:1px solid #2a2a38;
+        max-width:1250px;margin:0 0 22px}
+  .kpi{background:#12121a;padding:9px 16px;flex:1 1 190px;display:flex;flex-direction:column;gap:2px}
+  .kpi .k{color:#6a6a7a;font-size:9.5px;letter-spacing:1.5px}
+  .kpi .v{color:#e8e8ea;font-size:20px;line-height:1.2}
+  .kpi .n{color:#9a9aa8;font-size:10.5px}
+  /* band sections */
+  .band{margin:0 0 30px;max-width:1250px}
+  .bhead{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;
+         border-left:3px solid #2a2a38;padding:1px 0 1px 11px;margin-bottom:7px}
+  .bhead h2{font-size:13px;letter-spacing:2px;margin:0}
+  .bhead .cnt{color:#6a6a7a;font-size:10px;letter-spacing:1.5px}
+  .bhead .def{color:#9a9aa8;font-size:11px;line-height:1.6;flex:1 1 420px;min-width:280px}
+  .wrap{overflow-x:auto;border:1px solid #1c1c26}
+  table{width:100%;min-width:1120px;border-collapse:collapse;font-size:12px}
+  th{text-align:left;color:#6a6a7a;font-size:9.5px;letter-spacing:1.2px;padding:6px 10px;
+     border-bottom:1px solid #2a2a38;background:#0e0e15;white-space:nowrap;position:sticky;top:0}
+  th.num{text-align:right}
+  td{padding:7px 10px;border-bottom:1px solid #16161f;vertical-align:top;white-space:nowrap}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  tr:hover td{background:#15151f}
+  td.bk a{color:#e8e8ea;font-weight:bold;letter-spacing:.5px}
+  td.bk a:hover{color:#ffc233}
+  .why{display:block;color:#6a6a7a;font-size:10px;letter-spacing:0;white-space:normal;
+       max-width:38ch;margin-top:3px;line-height:1.45}
+  td.lad{color:#9a9aa8;font-size:11px}
+  td.n .why{max-width:22ch}
+  .q{color:#6a6a7a;font-size:10.5px}
+  .up{color:#3fdc7f}
+  .down{color:#ff4d4d}
+  td.exp{white-space:nowrap}
+  .gauge{display:inline-block;position:relative;width:64px;height:5px;background:#1c1c26;
+         margin-left:8px;vertical-align:middle}
+  .gauge::before{content:"";position:absolute;left:50%;top:0;bottom:0;width:1px;
+                 background:#3a3a48;z-index:2}
+  .gauge i{position:absolute;top:0;bottom:0;display:block}
+  .gauge i.up{background:#3fdc7f}
+  .gauge i.down{background:#ff4d4d}
+  .pill{display:inline-block;font-size:9.5px;letter-spacing:1.2px;padding:2px 7px;
+        border:1px solid #2a2a38;color:#6a6a7a}
+  .pill.live{color:#3fdc7f;border-color:#1e5c3c}
+  .pill.idle{color:#6a6a7a}
+  .pill.arch{color:#6a6a7a;opacity:.75}
+  .note{max-width:1250px;border-left:3px solid #ffc233;background:#14141d;color:#9a9aa8;
+        padding:9px 12px;margin:9px 0 0;font-size:11.5px;line-height:1.65}
+  .note b{color:#e8e8ea}
+  .rule{max-width:1250px;border-left:3px solid #2a2a38;background:#0e0e15;color:#9a9aa8;
+        padding:10px 13px;margin:0 0 22px;font-size:11.5px;line-height:1.7}
+  .rule b{color:#e8e8ea}
+  .rule .r{color:#ffc233}
+  footer{max-width:1250px;color:#6a6a7a;font-size:10.5px;line-height:1.8;
+         border-top:1px solid #1c1c26;margin-top:26px;padding-top:14px}
+</style></head><body>
+<div class="nav">
+  <a class="tab" href="index.html" title="NERV dashboard home">&#8962; HOME</a>
+  <a class="tab" href="trades.html">TRADE JOURNAL</a>
+  
+  <a class="tab" href="wallets.html">WALLETS</a>
+  <span class="tab on">RETURN BANDS</span>
+</div>
+<h1>RETURN BANDS</h1>
+<div class="sub">Every book sorted by the multiple its exit ladder can actually deliver, not by
+ambition. Ladders are read from each book's <b>config file at request time</b>, so this page
+re-bands a book the moment you change its stop or cap in EDIT PARAMETERS. Expectancy is the mean
+exit multiple per trade net of the 4% cost model; <b>1.000x is breakeven</b>.</div>
+
+<div class="kpis">
+  <div class="kpi"><span class="k">BEST MEASURED EXPECTANCY</span>
+    <span class="v">1.535x</span>
+    <span class="n">Q-VWAP &middot; n=126</span></div>
+  <div class="kpi"><span class="k">BEST LIVE TRADE EVER</span>
+    <span class="v">3.64x</span>
+    <span class="n">across 117 closed paper trades</span></div>
+  <div class="kpi"><span class="k">LIVE 10x PRINTS</span>
+    <span class="v">0</span>
+    <span class="n">books that have ever closed one</span></div>
+  <div class="kpi"><span class="k">LADDERS THAT PERMIT 10x</span>
+    <span class="v">2</span>
+    <span class="n">PULLBACK V2, HOMERUN</span></div>
+  <div class="kpi"><span class="k">RUNNING BOOKS WITH NO TRADE</span>
+    <span class="v">11 <span class="q">/ 15</span></span>
+    <span class="n">their expectancy is backtest-only</span></div></div>
+
+<div class="rule"><b>How a book gets its band.</b>
+<span class="r">reach</span> = the hard take-profit, the most one trade can ever return.
+<span class="r">target</span> = the first rung that actually <b>sells</b> something, or
+<span class="r">reach</span> when no rung does &mdash; a rung with
+<code>sell_fraction_of_remaining: 0</code> banks nothing, it only arms the trailing stop, which is
+why BOUNCE, HOLDER and HOMERUN are ride-to-the-cap books despite showing a low rung in their config.
+Then: <b>10x+</b> if <span class="r">reach</span> &ge; 10 &middot;
+<b>2&ndash;5x</b> if <span class="r">target</span> &ge; 2.0 or the measured share of trades reaching
+2x is &ge; 20% &middot; <b>2x</b> otherwise. The second leg exists because a cap is permission, not
+outcome: GRIND-VWAP-X is capped at 3.0x and has never printed above 1.78x in 126 trades. That is why
+<b>&ge;2x</b> and <b>Max</b> are shown next to the cap rather than folded into it.</div>
+
+<div class="band">  <div class="bhead" style="border-left-color:#7fc9e8">    <h2 style="color:#7fc9e8">BAND 1 · THE 2x SHELF</h2>    <span class="cnt">9 BOOKS</span>    <span class="def">Banks 1.4&ndash;1.8x and leaves. Reaching 2x is rare to impossible even where the cap nominally allows it, because the selling rung or the trailing stop closes the trade first.</span></div>  <div class="wrap"><table><thead><tr>
+  <th>Book</th><th>Ladder</th><th class="num">Target &rarr; cap</th>
+  <th class="num">Expectancy</th><th class="num">WR</th>
+  <th class="num">&ge;2x</th><th class="num">&ge;10x</th><th class="num">Max</th>
+  <th class="num">Backtest n</th><th>Live paper</th><th>Status</th>
+</tr></thead><tbody><tr>
+  <td class="bk"><b>GRIND-VWAP-X</b>
+      <span class="why">the same entry banking 75% at 1.5x on a tighter stop - highest win rate and shallowest dr...</span></td>
+  <td class="lad">&minus;55% &rarr; 75%@1.5x &rarr; 3x cap &middot; trail 25% &middot; 15m</td>
+  <td class="num">1.5x <span class="q">&rarr; 3x</span></td>
+  <td class="num exp"><span class="up">1.248x</span><span class="gauge"><i class="up" style="left:50%;width:24.8%"></i></span></td>
+  <td class="num">84.1%</td>
+  <td class="num">0.0%</td>
+  <td class="num">0.0%</td>
+  <td class="num">1.78x</td>
+  <td class="num n">126<span class="why">gfam_backtest.json &middot; holdout 1.23x</span></td>
+  <td class="lv">&ndash;</td>
+  <td class="st"><span class="pill idle">0 TRADES</span></td>
+</tr><tr>
+  <td class="bk"><b>GRIND-VWAP</b>
+      <span class="why">same below-VWAP entry as qvwap, banking half at 1.5x instead of riding to 10x</span></td>
+  <td class="lad">&minus;55% &rarr; 50%@1.5x &rarr; 3x cap &middot; trail 10% &middot; 10m</td>
+  <td class="num">1.5x <span class="q">&rarr; 3x</span></td>
+  <td class="num exp"><span class="up">1.246x</span><span class="gauge"><i class="up" style="left:50%;width:24.6%"></i></span></td>
+  <td class="num">81.0%</td>
+  <td class="num">17.5%</td>
+  <td class="num">0.0%</td>
+  <td class="num">2.12x</td>
+  <td class="num n">126<span class="why">gfam_backtest.json &middot; holdout 1.22x</span></td>
+  <td class="lv">&ndash;</td>
+  <td class="st"><span class="pill idle">0 TRADES</span></td>
+</tr><tr>
+  <td class="bk"><b>SCALP-50</b>
+      <span class="why">user-specified symmetric scalp: 5.0 SOL bank, 2.5 SOL per trade, +50% target, -50% stop, ...</span></td>
+  <td class="lad">&minus;50% &rarr; 1.5x cap &middot; trail 10% &middot; 5m</td>
+  <td class="num">1.5x <span class="q">&rarr; 1.5x</span></td>
+  <td class="num exp"><span class="up">1.220x</span><span class="gauge"><i class="up" style="left:50%;width:22.0%"></i></span></td>
+  <td class="num">78.6%</td>
+  <td class="num">0.0%</td>
+  <td class="num">0.0%</td>
+  <td class="num">1.44x</td>
+  <td class="num n">126<span class="why">scalp_backtest.json &middot; holdout 1.215x</span></td>
+  <td class="lv">&ndash;</td>
+  <td class="st"><span class="pill idle">0 TRADES</span></td>
+</tr><tr>
+  <td class="bk"><b>COPY-SCALP</b>
+      <span class="why">user request: SCALP-50s exit doctrine (+50% target, -50% stop, 5.0 SOL bank, 2.5 SOL a tr...</span></td>
+  <td class="lad">&minus;50% &rarr; 1.5x cap &middot; trail 10% &middot; 15m</td>
+  <td class="num">1.5x <span class="q">&rarr; 1.5x</span></td>
+  <td class="num exp"><span class="up">1.127x</span><span class="gauge"><i class="up" style="left:50%;width:12.7%"></i></span></td>
+  <td class="num">60.7%</td>
+  <td class="num">0.0%</td>
+  <td class="num">0.0%</td>
+  <td class="num">1.44x</td>
+  <td class="num n">28<span class="why">copyscalp_backtest.json</span></td>
+  <td class="lv">&ndash;</td>
+  <td class="st"><span class="pill arch">ARCHIVED</span></td>
+</tr><tr>
+  <td class="bk"><b>VOL-ANOM</b>
+      <span class="why"></span></td>
+  <td class="lad">&minus;35% &rarr; 40%@1.5x &rarr; 3x cap &middot; trail 10% &middot; 120m</td>
+  <td class="num">1.5x <span class="q">&rarr; 3x</span></td>
+  <td class="num exp"><span class="down">0.901x</span><span class="gauge"><i class="down" style="right:50%;width:9.9%"></i></span></td>
+  <td class="num">39.3%</td>
+  <td class="num">3.7%</td>
+  <td class="num">0.0%</td>
+  <td class="num">2.3x</td>
+  <td class="num n">107<span class="why">newstrat_backtest.json</span></td>
+  <td class="lv">&ndash;</td>
+  <td class="st"><span class="pill idle">0 TRADES</span></td>
+</tr><tr>
+  <td class="bk"><b>SNIPER</b>
+      <span class="why"></span></td>
+  <td class="lad">&minus;35% &rarr; 50%@1.5x &rarr; 3x cap &middot; trail 25% &middot; 120m</td>
+  <td class="num">1.5x <span class="q">&rarr; 3x</span></td>
+  <td class="num exp"><span class="down">0.835x</span><span class="gauge"><i class="down" style="right:50%;width:16.5%"></i></span></td>
+  <td class="num">40.5%</td>
+  <td class="num">5.8%</td>
+  <td class="num">0.0%</td>
+  <td class="num">2.16x</td>
+  <td class="num n">2912<span class="why">newstrat_backtest.json</span></td>
+  <td class="lv">&ndash;</td>
+  <td class="st"><span class="pill idle">0 TRADES</span></td>
+</tr><tr>
+  <td class="bk"><b>DIP</b>
+      <span class="why"></span></td>
+  <td class="lad">&minus;35% &rarr; 50%@1.8x &rarr; 3x cap &middot; trail 25% &middot; 180m</td>
+  <td class="num">1.8x <span class="q">&rarr; 3x</span></td>
+  <td class="num exp"><span class="down">0.799x</span><span class="gauge"><i class="down" style="right:50%;width:20.1%"></i></span></td>
+  <td class="num">34.0%</td>
+  <td class="num">5.3%</td>
+  <td class="num">0.0%</td>
+  <td class="num">2.3x</td>
+  <td class="num n">1007<span class="why">newstrat_backtest.json</span></td>
+  <td class="lv">&ndash;</td>
+  <td class="st"><span class="pill idle">0 TRADES</span></td>
+</tr><tr>
+  <td class="bk"><b>BASE</b>
+      <span class="why"></span></td>
+  <td class="lad">&minus;35% &rarr; 30%@1.35x &rarr; 3x cap &middot; trail 10% &middot; 120m</td>
+  <td class="num">1.35x <span class="q">&rarr; 3x</span></td>
+  <td class="num">&ndash;</td>
+  <td class="num">&ndash;</td>
+  <td class="num">&ndash;</td>
+  <td class="num">&ndash;</td>
+  <td class="num">&ndash;</td>
+  <td class="num n">&ndash;<span class="why"></span></td>
+  <td class="lv">0.879x <span class="q">/ 23.8% WR &middot; best 2.09x</span></td>
+  <td class="st"><span class="pill arch">ARCHIVED</span></td>
+</tr><tr>
+  <td class="bk"><b>PULLBACK V2-S</b>
+      <span class="why"></span></td>
+  <td class="lad">&minus;60.0% &rarr; 100%@1.5x &rarr; 1.5x cap &middot; trail 100.0% &middot; 60m</td>
+  <td class="num">1.5x <span class="q">&rarr; 1.5x</span></td>
+  <td class="num">&ndash;</td>
+  <td class="num">&ndash;</td>
+  <td class="num">&ndash;</td>
+  <td class="num">&ndash;</td>
+  <td class="num">&ndash;</td>
+  <td class="num n">&ndash;<span class="why"></span></td>
+  <td class="lv">&ndash;</td>
+  <td class="st"><span class="pill idle">0 TRADES</span></td>
+</tr></tbody></table></div>  <div class="note"><b>Four of these are not four bets.</b> GRIND-VWAP, GRIND-VWAP-X and SCALP-50 share one entry screen with Q-VWAP in band 2 (Jaccard 1.000 &mdash; literally the same tokens), and COPY-SCALP shares GRINDER's copy stream. Running them together is an A/B of exit doctrine, not diversification.</div></div><div class="band">  <div class="bhead" style="border-left-color:#3fdc7f">    <h2 style="color:#3fdc7f">BAND 2 · 2x TO 5x</h2>    <span class="cnt">7 BOOKS</span>    <span class="def">Capped at 3&ndash;4x, and a real share of trades gets there. Every positive expectancy the fleet has measured lives in this band.</span></div>  <div class="wrap"><table><thead><tr>
+  <th>Book</th><th>Ladder</th><th class="num">Target &rarr; cap</th>
+  <th class="num">Expectancy</th><th class="num">WR</th>
+  <th class="num">&ge;2x</th><th class="num">&ge;10x</th><th class="num">Max</th>
+  <th class="num">Backtest n</th><th>Live paper</th><th>Status</th>
+</tr></thead><tbody><tr>
+  <td class="bk"><b>Q-VWAP</b>
+      <span class="why">trading under its volume-weighted average price - everyone who bought the first three min...</span></td>
+  <td class="lad">&minus;55% &rarr; 3x cap &middot; trail 20% &middot; 10m</td>
+  <td class="num">3x <span class="q">&rarr; 3x</span></td>
+  <td class="num exp"><span class="up">1.535x</span><span class="gauge"><i class="up" style="left:50%;width:50.0%"></i></span></td>
+  <td class="num">60.3%</td>
+  <td class="num">38.1%</td>
+  <td class="num">0.0%</td>
+  <td class="num">2.79x</td>
+  <td class="num n">126<span class="why">qfam_backtest.json &middot; holdout 1.395x</span></td>
+  <td class="lv">&ndash;</td>
+  <td class="st"><span class="pill idle">0 TRADES</span></td>
+</tr><tr>
+  <td class="bk"><b>GRINDER</b>
+      <span class="why"></span></td>
+  <td class="lad">&minus;35% &rarr; 50%@2x &rarr; 3x cap &middot; trail 10% &middot; 240m</td>
+  <td class="num">2x <span class="q">&rarr; 3x</span></td>
+  <td class="num exp"><span class="up">1.421x</span><span class="gauge"><i class="up" style="left:50%;width:42.1%"></i></span></td>
+  <td class="num">71.4%</td>
+  <td class="num">10.7%</td>
+  <td class="num">0.0%</td>
+  <td class="num">2.33x</td>
+  <td class="num n">28<span class="why">grinder_backtest.json</span></td>
+  <td class="lv">0.893x <span class="q">/ 25.5% WR &middot; best 3.64x</span></td>
+  <td class="st"><span class="pill live">51 CLOSED</span></td>
+</tr><tr>
+  <td class="bk"><b>Q-SURGE</b>
+      <span class="why">volume is accelerating into the entry, price is off its VWAP but well up off the floor - ...</span></td>
+  <td class="lad">&minus;55% &rarr; 3x cap &middot; trail 50% &middot; 5m</td>
+  <td class="num">3x <span class="q">&rarr; 3x</span></td>
+  <td class="num exp"><span class="up">1.421x</span><span class="gauge"><i class="up" style="left:50%;width:42.1%"></i></span></td>
+  <td class="num">59.8%</td>
+  <td class="num">33.6%</td>
+  <td class="num">0.0%</td>
+  <td class="num">2.79x</td>
+  <td class="num n">107<span class="why">qfam_backtest.json &middot; holdout 1.336x</span></td>
+  <td class="lv">&ndash;</td>
+  <td class="st"><span class="pill idle">0 TRADES</span></td>
+</tr><tr>
+  <td class="bk"><b>GRINDER-RUNNER</b>
+      <span class="why"></span></td>
+  <td class="lad">&minus;60% &rarr; 50%@2x &rarr; 4x cap &middot; trail 10% &middot; 240m</td>
+  <td class="num">2x <span class="q">&rarr; 4x</span></td>
+  <td class="num exp"><span class="up">1.401x</span><span class="gauge"><i class="up" style="left:50%;width:40.1%"></i></span></td>
+  <td class="num">71.4%</td>
+  <td class="num">21.4%</td>
+  <td class="num">0.0%</td>
+  <td class="num">2.79x</td>
+  <td class="num n">28<span class="why">grinderrun_backtest.json</span></td>
+  <td class="lv">0.808x <span class="q">/ 26.1% WR &middot; best 2.53x</span></td>
+  <td class="st"><span class="pill live">23 CLOSED</span></td>
+</tr><tr>
+  <td class="bk"><b>Q-DIP</b>
+      <span class="why">a big green candle has printed and price has since fallen to under 45% of its own high - ...</span></td>
+  <td class="lad">&minus;55% &rarr; 3x cap &middot; trail 20% &middot; 10m</td>
+  <td class="num">3x <span class="q">&rarr; 3x</span></td>
+  <td class="num exp"><span class="up">1.395x</span><span class="gauge"><i class="up" style="left:50%;width:39.5%"></i></span></td>
+  <td class="num">56.1%</td>
+  <td class="num">32.7%</td>
+  <td class="num">0.0%</td>
+  <td class="num">2.79x</td>
+  <td class="num n">107<span class="why">qfam_backtest.json &middot; holdout 1.36x</span></td>
+  <td class="lv">&ndash;</td>
+  <td class="st"><span class="pill idle">0 TRADES</span></td>
+</tr><tr>
+  <td class="bk"><b>BOUNCE</b>
+      <span class="why"></span></td>
+  <td class="lad">&minus;35% &rarr; 1.5x stage &rarr; 3x cap &middot; trail 25% &middot; 480m<span class="why">1.5x rung sells nothing &mdash; it only arms the trail</span></td>
+  <td class="num">3x <span class="q">&rarr; 3x</span></td>
+  <td class="num">&ndash;</td>
+  <td class="num">&ndash;</td>
+  <td class="num">&ndash;</td>
+  <td class="num">&ndash;</td>
+  <td class="num">&ndash;</td>
+  <td class="num n">&ndash;<span class="why"></span></td>
+  <td class="lv">0.978x <span class="q">/ 66.7% WR &middot; best 1.28x</span></td>
+  <td class="st"><span class="pill live">3 CLOSED</span></td>
+</tr><tr>
+  <td class="bk"><b>HOLDER</b>
+      <span class="why"></span></td>
+  <td class="lad">&minus;35% &rarr; 1.5x stage &rarr; 3x cap &middot; trail 25% &middot; 480m<span class="why">1.5x rung sells nothing &mdash; it only arms the trail</span></td>
+  <td class="num">3x <span class="q">&rarr; 3x</span></td>
+  <td class="num">&ndash;</td>
+  <td class="num">&ndash;</td>
+  <td class="num">&ndash;</td>
+  <td class="num">&ndash;</td>
+  <td class="num">&ndash;</td>
+  <td class="num n">&ndash;<span class="why"></span></td>
+  <td class="lv">0.811x <span class="q">/ 30.0% WR &middot; best 2.64x</span></td>
+  <td class="st"><span class="pill arch">ARCHIVED</span></td>
+</tr></tbody></table></div>  <div class="note"><b>The repeated 2.79x maximum is the 3.0x cap after fill slippage.</b> Nothing in this band can exceed it &mdash; the ladder sells first. GRINDER and GRINDER-RUNNER are one entry signal in two exits, scored on the same 28-mint copy stream.</div></div><div class="band">  <div class="bhead" style="border-left-color:#ffc233">    <h2 style="color:#ffc233">BAND 3 · 10x AND UP</h2>    <span class="cnt">2 BOOKS</span>    <span class="def">The only ladders that permit a 10x. Permission is not expectancy: both books here are negative or killed on their own pre-registered evidence.</span></div>  <div class="wrap"><table><thead><tr>
+  <th>Book</th><th>Ladder</th><th class="num">Target &rarr; cap</th>
+  <th class="num">Expectancy</th><th class="num">WR</th>
+  <th class="num">&ge;2x</th><th class="num">&ge;10x</th><th class="num">Max</th>
+  <th class="num">Backtest n</th><th>Live paper</th><th>Status</th>
+</tr></thead><tbody><tr>
+  <td class="bk"><b>PULLBACK V2</b>
+      <span class="why"></span></td>
+  <td class="lad">&minus;60% &rarr; 75%@1.5x &rarr; 25x cap &middot; trail 100% &middot; 240m</td>
+  <td class="num">1.5x <span class="q">&rarr; 25x</span></td>
+  <td class="num exp"><span class="up">1.139x</span><span class="gauge"><i class="up" style="left:50%;width:13.9%"></i></span></td>
+  <td class="num">74.4%</td>
+  <td class="num">1.2%</td>
+  <td class="num">0.0%</td>
+  <td class="num">7.08x</td>
+  <td class="num n">82<span class="why">pullbackv2_backtest.json &middot; holdout 1.073x</span></td>
+  <td class="lv">0.821x <span class="q">/ 0.0% WR &middot; best 0.91x</span></td>
+  <td class="st"><span class="pill live">9 CLOSED</span></td>
+</tr><tr>
+  <td class="bk"><b>HOMERUN</b>
+      <span class="why"></span></td>
+  <td class="lad">&minus;55% &rarr; 2.5x stage &rarr; 30x cap &middot; trail 55% &middot; 4d<span class="why">2.5x rung sells nothing &mdash; it only arms the trail</span></td>
+  <td class="num">30x <span class="q">&rarr; 30x</span></td>
+  <td class="num exp"><span class="down">0.789x</span><span class="gauge"><i class="down" style="right:50%;width:21.1%"></i></span></td>
+  <td class="num">8.7%</td>
+  <td class="num">2.4%</td>
+  <td class="num">1.6%</td>
+  <td class="num">28.8x</td>
+  <td class="num n">127<span class="why">homerun_backtest.json &amp;middot; ride30 &amp;middot; +mcap&amp;lt;=$25k +mom&amp;gt;1.3 +organic</span></td>
+  <td class="lv">&ndash;</td>
+  <td class="st"><span class="pill idle">0 TRADES</span></td>
+</tr></tbody></table></div>  <div class="note"><b>Permission is not expectancy.</b> HOMERUN's backtest did catch 10x &mdash; and still lost money in every screen tier, because ~92% of its entries die. PULLBACK V2 returned KILLED on both pre-registered gates and runs on paper by decision, not on evidence. Neither has approached its cap live.</div></div>
+
+<footer>
+Ladders: each book's live config (main tree and both worktrees), read fresh on every request &mdash;
+the same source the per-book pages use.<br>
+Measured columns: recomputed from the raw exit multiples in the reports/ file named on each row, not
+copied from its summary block. Books with no row there (BASE, BOUNCE, HOLDER) have no backtest on the
+ladder they are currently running; their research numbers were produced on a different exit ladder
+and are deliberately not quoted here.<br>
+Live columns: closed paper round trips only &mdash; voids and open positions excluded, exactly as the
+SORTIE RECORD tiles treat them. Paper trading only; no live capital.
+</footer>
+</body></html>
