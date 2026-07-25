@@ -85,5 +85,29 @@
     "min_listing_liquidity_usd": 500,
     "min_cum_vol_usd": 8000,
     "persist_state": true
+  },
+  "wallet_tracker": {
+    "enabled": true,
+    "db_path": "wallets.sqlite",
+    "tracked_path": "reports/tracked_wallets.json"
+  },
+  "books": {
+    "_note": "OFF by default: the live setup runs one process per strategy (config.bounce.json / config.holder.json), each with its own 1 SOL. Enabling this too would trade BOUNCE/H1 twice.",
+    "enabled": false,
+    "starting_balance_sol": 1.0,
+    "position_size_sol": 0.25,
+    "max_positions": 3,
+    "max_entries_per_cycle": 1,
+    "max_gate_checks_per_cycle": 8,
+    "max_backfills_per_cycle": 4,
+    "daily_loss_limit_sol": 0.75,
+    "max_trigger_age_sec": 300,
+    "strategies": {
+      "BOUNCE": { "enabled": true },
+      "V1": { "enabled": true },
+      "H1": { "enabled": true },
+      "H0": { "enabled": false },
+      "H2": { "enabled": false }
+    }
   }
 }

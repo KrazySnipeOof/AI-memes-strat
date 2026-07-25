@@ -35,6 +35,7 @@ FETCH_REWRITES = [
     ("fetch('/api/bdusage')",
      "fetch('data/bdusage.json?t=' + Date.now())"),
     ('href="/trades"', 'href="trades.html"'),
+    ('href="/wallets"', 'href="wallets.html"'),
 ]
 
 BADGE = """
@@ -124,9 +125,20 @@ def render(server) -> None:
         with open(cards, encoding="utf-8") as f:
             page = f.read()
         page = page.replace('href="/trades"', 'href="trades.html"')
+        page = page.replace('href="/wallets"', 'href="wallets.html"')
         page = page.replace('href="/"', 'href="index.html"')
         with open(os.path.join(DEPLOY_DIR, "trades.html"), "w", encoding="utf-8") as f:
             f.write(page)
+
+    try:
+        import walletpage
+        page = walletpage.render_page()
+        page = page.replace('href="/trades"', 'href="trades.html"')
+        page = page.replace('href="/"', 'href="index.html"')
+        with open(os.path.join(DEPLOY_DIR, "wallets.html"), "w", encoding="utf-8") as f:
+            f.write(page)
+    except Exception as exc:
+        print(f"WARN: wallets page render failed: {exc}")
 
 
 def push() -> bool:

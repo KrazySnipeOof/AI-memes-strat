@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
+from . import wallets
 from .config import Config
 from .util import fnum
 
@@ -29,7 +30,8 @@ def api_key() -> str:
     return os.environ.get("BIRDEYE_API_KEY", "").strip()
 
 
-def check(session, mint: str, cfg: Config) -> Optional[SmartMoneyReport]:
+def check(session, mint: str, cfg: Config,
+          symbol: Optional[str] = None) -> Optional[SmartMoneyReport]:
     """Top-trader profile for a token from Birdeye. Uses USD volumes only -
     the raw `volume` fields are in token units and useless for comparison."""
     if not api_key():
@@ -49,6 +51,7 @@ def check(session, mint: str, cfg: Config) -> Optional[SmartMoneyReport]:
         if r.status_code != 200:
             raise RuntimeError(f"http {r.status_code}")
         items = ((r.json().get("data") or {}).get("items")) or []
+        wallets.record_sighting(mint, items, symbol=symbol)
         vols = [fnum(i.get("volumeUsd")) for i in items]
         total = sum(vols)
         buys = sum(fnum(i.get("volumeBuyUSD")) for i in items)

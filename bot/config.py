@@ -111,6 +111,32 @@ class Config:
         self.ws_min_cum_vol_usd: float = float(w.get("min_cum_vol_usd", 8_000))
         self.ws_persist_state: bool = bool(w.get("persist_state", True))
 
+        # Wallet harvester (bot/wallets.py) - observational only; enabled: false
+        # leaves the smart-money gate's data path byte-identical.
+        wt = raw.get("wallet_tracker", {})
+        self.wt_enabled: bool = bool(wt.get("enabled", False))
+        self.wt_db_path: str = wt.get("db_path", "wallets.sqlite")
+        self.wt_tracked_path: str = wt.get(
+            "tracked_path", os.path.join("reports", "tracked_wallets.json"))
+
+        # Strategy books (bot/books.py) - one enforced bankroll per research
+        # strategy, riding the same candidate stream. enabled: false leaves
+        # the base strategy's path byte-identical; the base book never uses
+        # any of these numbers.
+        bk = raw.get("books", {})
+        self.books_enabled: bool = bool(bk.get("enabled", False))
+        self.books_start_sol: float = float(bk.get("starting_balance_sol", 1.0))
+        self.books_position_size_sol: float = float(
+            bk.get("position_size_sol", self.position_size_sol))
+        self.books_max_positions: int = int(bk.get("max_positions", self.max_positions))
+        self.books_max_entries_per_cycle: int = int(bk.get("max_entries_per_cycle", 1))
+        self.books_max_gate_checks_per_cycle: int = int(bk.get("max_gate_checks_per_cycle", 8))
+        self.books_max_backfills_per_cycle: int = int(bk.get("max_backfills_per_cycle", 4))
+        self.books_daily_loss_limit_sol: float = float(
+            bk.get("daily_loss_limit_sol", self.daily_loss_limit_sol))
+        self.books_max_trigger_age_sec: int = int(bk.get("max_trigger_age_sec", 300))
+        self.books_overrides: Dict[str, Any] = bk.get("strategies", {}) or {}
+
     @property
     def position_size_lamports(self) -> int:
         return int(self.position_size_sol * LAMPORTS_PER_SOL)

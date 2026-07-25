@@ -233,99 +233,122 @@ def svg_chart(candles: list, levels: dict, entry_ts: int, end_ts: int, win: bool
     return "".join(parts)
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description="Render per-trade journal cards")
-    ap.add_argument("--tokens-json", default=os.path.join("reports", "bd_tokens.json"))
-    ap.add_argument("--cache-dir", default=".bd_cache")
-    ap.add_argument("--asym-config", default="config.asym.json")
-    ap.add_argument("--entry-age", type=float, default=30)
-    ap.add_argument("--cost-pct", type=float, default=4)
-    ap.add_argument("--min-entry-vol", type=float, default=8000)
-    ap.add_argument("--max-cards", type=int, default=80)
-    ap.add_argument("--token-supply", type=float, default=1e9,
-                    help="assumed token supply for market-cap display (1B = standard launch)")
-    ap.add_argument("--sol-usd", type=float, default=None,
-                    help="SOL/USD for USD figures (default: fetch spot from CoinGecko/Binance)")
-    ap.add_argument("--no-setup-filter", action="store_true",
-                    help="disable the base-entry setup filter and show every age/volume entry")
-    ap.add_argument("--out", default=os.path.join("reports", "trade_cards.html"))
-    args = ap.parse_args()
-    setup = None if args.no_setup_filter else backtest.DEFAULT_SETUP
+class Syn:
+    """Lightweight stand-in for a backtest Token, for the copy/cluster
+    strategies whose 'tokens' are just a mint + symbol from a wallet's buy."""
+    def __init__(self, mint: str, symbol: str, pool: str = ""):
+        self.mint, self.symbol, self.pool = mint, symbol, pool
 
-    sol_usd = args.sol_usd if args.sol_usd is not None else fetch_sol_usd()
-    if sol_usd is None:
-        print("warning: SOL/USD unavailable (offline?) - USD figures omitted; pass --sol-usd to set one")
 
-    os.chdir(os.path.dirname(os.path.abspath(__file__)))
-    with open(args.asym_config, "r", encoding="utf-8") as f:
-        exits = json.load(f)["exits"]
+def _read_json(path: str):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
 
-    tokens = backtest.load_token_index(args.tokens_json)
-    trades = []
-    for tok in tokens:
-        candles = backtest.load_cached_candles(args.cache_dir, tok.pool)
-        if not candles:
-            continue
-        sim = backtest.simulate(candles, exits, args.entry_age, args.cost_pct, args.min_entry_vol,
-                                setup=setup)
-        if sim:
-            trades.append((tok, candles, sim))
 
-    n = len(trades)
-    wins = sum(1 for _, _, s in trades if s["multiple"] > 1.0)
-    avg = sum(s["multiple"] for _, _, s in trades) / n if n else 0
-    trades.sort(key=lambda t: -t[2]["entry_ts"])
-    shown = trades[:args.max_cards]
+def _load_copytrade_candles(cache_dir: str, mint: str):
+    """Candles for a copy/cluster token from the copytrade OHLCV cache
+    (files named {mint}_{resolution}.json); prefers the finest/longest series."""
+    import glob
+    best = None
+    for path in glob.glob(os.path.join(cache_dir, mint + "_*.json")):
+        c = _read_json(path)
+        cs = (c or {}).get("candles")
+        if cs and (best is None or len(cs) > len(best)):
+            best = cs
+    return best
 
-    tp1 = exits["take_profits"][0]
-    cards = []
-    for idx, (tok, candles, sim) in enumerate(shown, 1):
-        entry_p, entry_ts, end_ts = sim["entry_price"], sim["entry_ts"], sim["end_ts"]
-        m = sim["multiple"]
-        win = m > 1.0
-        stop_p = entry_p * (1 - exits["stop_loss_pct"] / 100)
-        tgt_p = entry_p * float(tp1["multiple"])
-        exit_p = entry_p * sim["events"][-1]["mult"] if sim["events"] else entry_p
-        net = POSITION_SOL * (m - 1)
-        window = [c for c in candles if entry_ts - 5400 <= c[0] <= end_ts + 3600]
-        if len(window) < 8:
-            window = candles[:120]
-        bucket = max(60, int((window[-1][0] - window[0][0]) / 55 // 60 * 60) or 60)
-        view = resample(window, bucket)
-        levels = {
-            "stop":   (stop_p, "Stop", RED),
-            "exit":   (exit_p, "Exit", AMBER),
-            "entry":  (entry_p, "Entry", CYAN),
-            "target": (tgt_p, "Target", GREEN),
-        }
-        chart = svg_chart(view, levels, entry_ts, end_ts, win, args.token_supply)
-        pre = [c for c in candles if c[0] <= entry_ts]
-        at_entry = entry_tiles(pre, int(entry_ts), entry_p, setup,
-                               args.min_entry_vol, args.token_supply)
-        sym = html.escape(tok.symbol or "?")
-        res_cls = "win" if win else "loss"
-        rows = "".join(
-            f'<div class="lv"><span>{k}</span><span style="color:{c}">{fmt_mcap(p * args.token_supply)}</span></div>'
-            for k, p, c in (("Entry", entry_p, CYAN), ("Stop", stop_p, RED),
-                            ("Target", tgt_p, GREEN), ("Exit", exit_p, AMBER)))
-        if sol_usd is not None:
-            size_usd = f'<span class="usd">≈ ${POSITION_SOL * sol_usd:,.2f}</span>'
-            res_usd = (f'<span class="usd">≈ ${POSITION_SOL * sol_usd:,.2f} → '
-                       f'${POSITION_SOL * m * sol_usd:,.2f} '
-                       f'({"+" if net >= 0 else "-"}${abs(net * sol_usd):,.2f})</span>')
-        else:
-            size_usd = res_usd = ""
-        cards.append(f"""
-<div class="card {res_cls}" data-mint="{html.escape(tok.mint)}">
+
+def build_follower_trades(args, exits):
+    """(copy_all, cluster) trade lists as (Syn, candles, sim) tuples, replaying
+    each monitored-wallet buy at trigger + follow-lag through this bot's exit
+    doctrine over the cached candles. setup gate is OFF (the follower entered on
+    the wallet signal, not the base-entry pattern)."""
+    data = _read_json(args.cluster_json)
+    copy_all, cluster = [], []
+    if not data or "card_trades" not in data:
+        return copy_all, cluster
+    lag = args.follow_lag * 60
+    for key, bucket in (("copy_all", copy_all), ("cluster", cluster)):
+        for rec in data["card_trades"].get(key, []):
+            candles = _load_copytrade_candles(args.copytrade_cache, rec["mint"])
+            if not candles:
+                continue
+            entry_ts = int(rec["trigger_ts"]) + lag
+            age = (entry_ts - candles[0][0]) / 60
+            if age < 0:
+                continue
+            sim = backtest.simulate(candles, exits, age, args.cost_pct, 0.0, setup=None)
+            if sim:
+                bucket.append((Syn(rec["mint"], rec.get("symbol", "?")), candles, sim))
+    return copy_all, cluster
+
+
+MANIP_COL = {"ORGANIC": GREEN, "RUG": RED, "WASH_RAMP": AMBER, "SPIKE_DUMP": AMBER}
+
+
+def build_card(idx, tok, candles, sim, exits, tp1, setup, supply, min_entry_vol,
+               sol_usd, strat, verdict=None) -> str:
+    """One journal card. `strat` tags it (data-strat) for the strategy filter;
+    `verdict` (manipscan) tags it (data-manip) + adds a scam/organic badge."""
+    entry_p, entry_ts, end_ts = sim["entry_price"], sim["entry_ts"], sim["end_ts"]
+    m = sim["multiple"]
+    win = m > 1.0
+    stop_p = entry_p * (1 - exits["stop_loss_pct"] / 100)
+    tgt_p = entry_p * float(tp1["multiple"])
+    exit_p = entry_p * sim["events"][-1]["mult"] if sim["events"] else entry_p
+    net = POSITION_SOL * (m - 1)
+    window = [c for c in candles if entry_ts - 5400 <= c[0] <= end_ts + 3600]
+    if len(window) < 8:
+        window = candles[:120]
+    bucket = max(60, int((window[-1][0] - window[0][0]) / 55 // 60 * 60) or 60)
+    view = resample(window, bucket)
+    levels = {
+        "stop":   (stop_p, "Stop", RED),
+        "exit":   (exit_p, "Exit", AMBER),
+        "entry":  (entry_p, "Entry", CYAN),
+        "target": (tgt_p, "Target", GREEN),
+    }
+    chart = svg_chart(view, levels, entry_ts, end_ts, win, supply)
+    pre = [c for c in candles if c[0] <= entry_ts]
+    at_entry = entry_tiles(pre, int(entry_ts), entry_p, setup, min_entry_vol, supply)
+    sym = html.escape(tok.symbol or "?")
+    res_cls = "win" if win else "loss"
+    if verdict:
+        mcls = verdict["class"]
+        mcol = MANIP_COL.get(mcls, INK2)
+        mtip = (f"human {verdict['human']} · manip {verdict['manip']} · sweet {verdict['sweet']}"
+                f" · life {verdict['lifespan_min']:.0f}m · rise {verdict['rise']}x"
+                f" · two-sided vol {verdict['red_vol_frac']:.0%} · ER {verdict['er']}")
+        badge = f' · <span style="color:{mcol}" title="{mtip}">{mcls}</span>'
+        data_manip = mcls
+    else:
+        badge, data_manip = "", "clean"
+    rows = "".join(
+        f'<div class="lv"><span>{k}</span><span style="color:{c}">{fmt_mcap(p * supply)}</span></div>'
+        for k, p, c in (("Entry", entry_p, CYAN), ("Stop", stop_p, RED),
+                        ("Target", tgt_p, GREEN), ("Exit", exit_p, AMBER)))
+    if sol_usd is not None:
+        size_usd = f'<span class="usd">≈ ${POSITION_SOL * sol_usd:,.2f}</span>'
+        res_usd = (f'<span class="usd">≈ ${POSITION_SOL * sol_usd:,.2f} → '
+                   f'${POSITION_SOL * m * sol_usd:,.2f} '
+                   f'({"+" if net >= 0 else "-"}${abs(net * sol_usd):,.2f})</span>')
+    else:
+        size_usd = res_usd = ""
+    pool_attr = html.escape(getattr(tok, "pool", "") or "")
+    return f"""
+<div class="card {res_cls}" data-strat="{strat}" data-manip="{data_manip}" data-mint="{html.escape(tok.mint)}">
   <div class="chead">
     <div>
-      <div class="t1">#{idx} {sym} LONG · <span class="{res_cls}-t">{"WIN" if win else "LOSS"}</span></div>
+      <div class="t1">#{idx} {sym} LONG · <span class="{res_cls}-t">{"WIN" if win else "LOSS"}</span>{badge}</div>
       <div class="t2">{fmt_ts(entry_ts)} → {fmt_ts(end_ts)} UTC · {m:.2f}x · net {net:+.4f} SOL
         · {html.escape(sim["reason"])}</div>
     </div>
     <div class="actions">
       <button class="btn blkbtn" data-mint="{html.escape(tok.mint)}" data-symbol="{sym}"
-        data-pool="{html.escape(tok.pool)}" data-result="{"win" if win else "loss"}"
+        data-pool="{pool_attr}" data-result="{"win" if win else "loss"}"
         data-mult="{m:.3f}" data-entry="{int(entry_ts)}"
         title="Flag this chart as an avoid-pattern (wash ramp / painted prices / scam). FORWARD-ONLY: this trade stays in the current stats — flags never edit existing results. Future listings matching the mint/symbol are excluded, and the chart is filed on the BLACKLIST tab.">Blacklist</button>
       <a class="btn" href="https://birdeye.so/token/{html.escape(tok.mint)}?chain=solana" target="_blank"
@@ -342,9 +365,97 @@ def main() -> None:
       {at_entry}
     </div>
   </div>
-</div>""")
+</div>"""
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="Render per-trade journal cards")
+    ap.add_argument("--tokens-json", default=os.path.join("reports", "bd_tokens.json"))
+    ap.add_argument("--cache-dir", default=".bd_cache")
+    ap.add_argument("--asym-config", default="config.asym.json")
+    ap.add_argument("--entry-age", type=float, default=30)
+    ap.add_argument("--cost-pct", type=float, default=4)
+    ap.add_argument("--min-entry-vol", type=float, default=8000)
+    ap.add_argument("--max-cards", type=int, default=80)
+    ap.add_argument("--token-supply", type=float, default=1e9,
+                    help="assumed token supply for market-cap display (1B = standard launch)")
+    ap.add_argument("--sol-usd", type=float, default=None,
+                    help="SOL/USD for USD figures (default: fetch spot from CoinGecko/Binance)")
+    ap.add_argument("--no-setup-filter", action="store_true",
+                    help="disable the base-entry setup filter and show every age/volume entry")
+    ap.add_argument("--cluster-json", default=os.path.join("reports", "cluster_backtest.json"),
+                    help="source of copy/cluster per-trade records + cached candles")
+    ap.add_argument("--copytrade-cache", default=".copytrade_cache",
+                    help="OHLCV cache dir for the copy/cluster strategies")
+    ap.add_argument("--follow-lag", type=int, default=5,
+                    help="entry lag (min) applied to copy/cluster trigger buys")
+    ap.add_argument("--out", default=os.path.join("reports", "trade_cards.html"))
+    args = ap.parse_args()
+    setup = None if args.no_setup_filter else backtest.DEFAULT_SETUP
+
+    sol_usd = args.sol_usd if args.sol_usd is not None else fetch_sol_usd()
+    if sol_usd is None:
+        print("warning: SOL/USD unavailable (offline?) - USD figures omitted; pass --sol-usd to set one")
+
+    os.chdir(os.path.dirname(os.path.abspath(__file__)))
+    with open(args.asym_config, "r", encoding="utf-8") as f:
+        exits = json.load(f)["exits"]
+
+    tp1 = exits["take_profits"][0]
+    # --- base strategy: backtest over the Birdeye sample ---
+    base_trades = []
+    for tok in backtest.load_token_index(args.tokens_json):
+        candles = backtest.load_cached_candles(args.cache_dir, tok.pool)
+        if not candles:
+            continue
+        sim = backtest.simulate(candles, exits, args.entry_age, args.cost_pct,
+                                args.min_entry_vol, setup=setup)
+        if sim:
+            base_trades.append((tok, candles, sim))
+
+    # --- copy / cluster strategies (from cluster_backtest.py records) ---
+    copy_trades, cluster_trades = build_follower_trades(args, exits)
+
+    # manipulation verdicts (manipscan.py): scam vs human/organic, per mint
+    manip = _read_json(os.path.join("reports", "manipscan.json")) or {}
+
+    strat_defs = [
+        ("base", "Base-entry", base_trades, setup),
+        ("copy_all", "Copy-all", copy_trades, None),
+        ("cluster", "Cluster-confirmed", cluster_trades, None),
+    ]
+    strat_meta, cards = {}, []
+    for key, label, tr, st in strat_defs:
+        cnt = len(tr)
+        w = sum(1 for _, _, s in tr if s["multiple"] > 1.0)
+        av = sum(s["multiple"] for _, _, s in tr) / cnt if cnt else 0
+        organic = sum(1 for tok, _, _ in tr if (manip.get(tok.mint) or {}).get("class") == "ORGANIC")
+        strat_meta[key] = {"label": label, "n": cnt,
+                           "wr": round(100 * w / cnt, 1) if cnt else 0, "avg": round(av, 3),
+                           "organic": organic if key != "base" else None}
+        # base: newest first. copy/cluster: rank by the human x manip "sweet"
+        # score so the journal surfaces the human-looking coins, not the rug
+        # firehose (the freshest snipes are almost all rugs).
+        if key == "base":
+            ordered = sorted(tr, key=lambda t: -t[2]["entry_ts"])
+        else:
+            def _rank(t):
+                v = manip.get(t[0].mint) or {}
+                return (0 if v.get("class") == "ORGANIC" else 1, -v.get("sweet", -1.0))
+            ordered = sorted(tr, key=_rank)
+        for idx, (tok, candles, sim) in enumerate(ordered[:args.max_cards], 1):
+            verdict = manip.get(tok.mint) if key != "base" else None
+            cards.append(build_card(idx, tok, candles, sim, exits, tp1, st,
+                                    args.token_supply, args.min_entry_vol, sol_usd, key, verdict))
+
+    # base-strategy figures drive the header prose + the SORTIE-LOG feed
+    n = strat_meta["base"]["n"]
+    wins = round(strat_meta["base"]["wr"] * n / 100)
+    avg = strat_meta["base"]["avg"]
+    shown = sorted(base_trades, key=lambda t: -t[2]["entry_ts"])[:args.max_cards]
 
     bd_snap_json = json.dumps(bdusage.snapshot())
+    strat_meta_json = json.dumps(strat_meta)
     doc = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>TRADE JOURNAL — asym-runner v2</title>
@@ -353,7 +464,8 @@ def main() -> None:
        font-size:13px;margin:0;padding:20px 24px 60px}}
   h1{{font-size:18px;color:#ff7a1a;letter-spacing:1px}}
   .sum{{color:{INK2};margin:6px 0 14px;font-size:12px;line-height:1.6}}
-  .filters{{margin:0 0 16px;display:flex;gap:8px}}
+  .filters{{margin:0 0 10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}}
+  .filters .flab{{color:{INK3};font-size:10px;letter-spacing:1px;margin-right:2px}}
   .filters button{{background:#14141d;color:{INK2};border:1px solid #2a2a38;padding:5px 14px;
        font-family:inherit;font-size:11px;letter-spacing:1px;cursor:pointer}}
   .filters button.on{{color:#ffc233;border-color:#ffc233}}
@@ -403,6 +515,7 @@ def main() -> None:
   <span class="tab on">TRADE JOURNAL</span>
   <a class="tab" href="/montecarlo" title="Monte Carlo equity-path simulation">MONTE CARLO</a>
   <a class="tab" href="/blacklist" title="Charts purged from the sample — manual flags + auto wash-ramps">BLACKLIST</a>
+  <a class="tab" href="/wallets" title="Scouted copy-trade wallets + tracked watchlist + live harvest">WALLETS</a>
   <div class="bd" title="Lite plan: 2.5M CU/cycle (anchored the 20th), 15 RPS, overage $15/1M CU. Local ledger + reconstructed baseline (Birdeye has no usage API - their Usages/Metrics page is authoritative). OHLCV CU cost is an estimate.">
     <span class="bdlab">BIRDEYE API</span><span id="bdtext">no usage tracked yet</span>
     <div class="bdbar"><div id="bdfill"></div></div>
@@ -423,11 +536,31 @@ backtest trades — no source has them as-of a past timestamp, and today's value
 <b>Blacklist button (forward-only):</b> the flagged trade STAYS in the stats above — hand-flags never
 edit existing results (deleting losers would inflate them). A flag excludes future listings matching
 the mint/symbol and files the chart on the BLACKLIST tab as an avoid-pattern reference.</div>
-<div class="filters">
+<div class="filters" id="stratf">
+  <span class="flab">STRATEGY</span>
+  <button class="on" data-s="all">ALL</button>
+  <button data-s="base">BASE-ENTRY</button>
+  <button data-s="copy_all">COPY-ALL</button>
+  <button data-s="cluster">CLUSTER-CONFIRMED</button>
+</div>
+<div class="sum" id="strat-stats" style="margin:0 0 12px"></div>
+<div class="filters" id="resf">
+  <span class="flab">RESULT</span>
   <button class="on" data-f="all">ALL</button>
   <button data-f="win">WINS</button>
   <button data-f="loss">LOSSES</button>
 </div>
+<div class="filters" id="qualf">
+  <span class="flab">QUALITY</span>
+  <button class="on" data-q="all">ALL</button>
+  <button data-q="human" title="ORGANIC copy/cluster tokens (real two-sided volume, sustained trading, natural pullbacks) + the clean base sample">HUMAN-LOOKING</button>
+  <button data-q="scam" title="RUG / WASH-RAMP / SPIKE-DUMP — bot artefacts with no real crowd">SCAM-LIKE</button>
+</div>
+<div class="sum" style="margin:0 0 12px;font-size:11px;color:{INK3}">
+  QUALITY tags copy/cluster tokens (manipscan.py): <span style="color:{GREEN}">ORGANIC</span> = human +
+  manipulated (tradeable) · <span style="color:{RED}">RUG</span> = instant collapse ·
+  <span style="color:{AMBER}">WASH_RAMP / SPIKE_DUMP</span> = bot-painted. Base-entry cards are the
+  pre-cleaned validated sample. Hover a tag for its human/manip scores.</div>
 {"".join(cards)}
 <script>
 const BD_EMBED = {bd_snap_json};
@@ -452,13 +585,55 @@ function bdPoll() {{
 }}
 bdPoll();
 setInterval(bdPoll, 60000);
-document.querySelectorAll('.filters button').forEach(b => b.onclick = () => {{
-  document.querySelectorAll('.filters button').forEach(x => x.classList.remove('on'));
-  b.classList.add('on');
-  const f = b.dataset.f;
-  document.querySelectorAll('.card').forEach(c =>
-    c.style.display = (f === 'all' || c.classList.contains(f)) ? '' : 'none');
+const STRAT_META = {strat_meta_json};
+const STRAT_NOTE = {{
+  base: 'The bot\\'s own validated backtest — the live-arbiter strategy (audit applies).',
+  copy_all: 'Enter every monitored-wallet buy (+{args.follow_lag}m). Unbiased at the token level but WALLET-selection biased + inherits backtest fill optimism — an upper bound, not proven live.',
+  cluster: 'Enter only on a 2nd-wallet confirmation (+{args.follow_lag}m). The unbiased test found this does NOT beat copy-all — shown for comparison.'
+}};
+let curStrat = 'all', curRes = 'all', curQual = 'all';
+const SCAMISH = ['RUG', 'WASH_RAMP', 'SPIKE_DUMP'];
+function applyFilters() {{
+  document.querySelectorAll('.card').forEach(c => {{
+    const okS = curStrat === 'all' || c.dataset.strat === curStrat;
+    const okR = curRes === 'all' || c.classList.contains(curRes);
+    const dm = c.dataset.manip;
+    const okQ = curQual === 'all'
+      || (curQual === 'human' && (dm === 'ORGANIC' || dm === 'clean'))
+      || (curQual === 'scam' && SCAMISH.includes(dm));
+    c.style.display = (okS && okR && okQ) ? '' : 'none';
+  }});
+  const el = document.getElementById('strat-stats');
+  if (curStrat === 'all') {{
+    const parts = Object.keys(STRAT_META).map(k => {{
+      const m = STRAT_META[k];
+      return m.label + ' ' + m.n + ' trades / ' + m.wr + '% WR / ' + m.avg + 'x';
+    }});
+    el.innerHTML = '<b>All strategies:</b> ' + parts.join(' &nbsp;·&nbsp; ') +
+      ' — pick one above to browse its cards.';
+  }} else {{
+    const m = STRAT_META[curStrat];
+    const org = (m.organic != null)
+      ? ' · <span style="color:{GREEN}">' + m.organic + ' of ' + m.n +
+        ' organic/human</span> (' + Math.round(100 * m.organic / m.n) + '%)'
+      : '';
+    el.innerHTML = '<b>' + m.label + ':</b> ' + m.n + ' trades · ' + m.wr + '% WR · ' +
+      m.avg + 'x avg' + org + '. ' + (STRAT_NOTE[curStrat] || '');
+  }}
+}}
+document.querySelectorAll('#stratf button').forEach(b => b.onclick = () => {{
+  document.querySelectorAll('#stratf button').forEach(x => x.classList.remove('on'));
+  b.classList.add('on'); curStrat = b.dataset.s; applyFilters();
 }});
+document.querySelectorAll('#resf button').forEach(b => b.onclick = () => {{
+  document.querySelectorAll('#resf button').forEach(x => x.classList.remove('on'));
+  b.classList.add('on'); curRes = b.dataset.f; applyFilters();
+}});
+document.querySelectorAll('#qualf button').forEach(b => b.onclick = () => {{
+  document.querySelectorAll('#qualf button').forEach(x => x.classList.remove('on'));
+  b.classList.add('on'); curQual = b.dataset.q; applyFilters();
+}});
+applyFilters();
 // ---- blacklist button: persists via the dashboard (POST /api/blacklist) ----
 function setBlk(card, on) {{
   card.classList.toggle('blked', on);

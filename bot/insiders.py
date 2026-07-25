@@ -40,6 +40,7 @@ class InsiderReport:
     insider_networks: int  # distinct insider wallet-networks detected
     total_holders: Optional[int]
     rugged: bool
+    top1_pct: float = -1.0  # % held by the single largest holder; -1 when unknown
 
 
 def _from_gmgn(session, mint: str) -> Optional[InsiderReport]:
@@ -111,10 +112,9 @@ def _from_rugcheck(session, mint: str) -> Optional[InsiderReport]:
     ]
     creator = d.get("creator")
     insider_pct = sum(fnum(h.get("pct")) for h in holders if h.get("insider"))
-    top10_pct = sum(
-        fnum(h.get("pct"))
-        for h in sorted(holders, key=lambda h: fnum(h.get("pct")), reverse=True)[:10]
-    )
+    ranked = sorted(holders, key=lambda h: fnum(h.get("pct")), reverse=True)
+    top10_pct = sum(fnum(h.get("pct")) for h in ranked[:10])
+    top1_pct = fnum(ranked[0].get("pct")) if ranked else -1.0
     creator_pct = sum(
         fnum(h.get("pct")) for h in holders
         if creator and (h.get("owner") == creator or h.get("address") == creator)
@@ -129,6 +129,7 @@ def _from_rugcheck(session, mint: str) -> Optional[InsiderReport]:
         insider_networks=len(networks) if isinstance(networks, list) else 0,
         total_holders=d.get("totalHolders"),
         rugged=bool(d.get("rugged")),
+        top1_pct=top1_pct,
     )
 
 

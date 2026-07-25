@@ -88,6 +88,52 @@ Everything is in `config.json`. The knobs that matter most:
 Filters are deliberately strict; expect many cycles with zero entries. Loosening them buys
 more trades at the price of more rugs.
 
+## Strategy books (one bankroll per strategy)
+
+The bot can run research strategies beside the base one, each with its **own paper
+account**: its own starting balance (1 SOL by default), its own positions, its own entry
+rule and exit doctrine, its own daily-loss breaker. Cash is enforced — a book that has
+spent its SOL stops trading until an exit returns some.
+
+Nothing a book does touches the base strategy. Book positions live in the same sqlite
+under their own `mode` (`book:BOUNCE`), which every ledger query already filters on, and
+books ride the candidate stream the base scan already produced, so discovery costs
+nothing extra.
+
+Configure with the `books` block (`enabled: false` by default, which leaves the base
+bot's path byte-identical):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `starting_balance_sol` | 1.0 | bankroll each book starts with |
+| `position_size_sol` | base value | SOL per book trade |
+| `max_positions` | base value | concurrent positions per book |
+| `max_entries_per_cycle` | 1 | entries per book per cycle |
+| `max_gate_checks_per_cycle` | 8 | gate lookups that cost an API call, per book per cycle |
+| `max_backfills_per_cycle` | 4 | REST candle backfills all books share per cycle |
+| `max_trigger_age_sec` | 300 | how stale a candle trigger may be and still be traded |
+| `daily_loss_limit_sol` | base value | realized daily loss that halts a book |
+| `strategies.<KEY>.enabled` | per book | turn an individual book on or off |
+
+Books ship in `bot/books.py`; their entry rules are imported verbatim from the
+pre-registered research modules, never re-typed:
+
+| Key | Entry rule | Exits | Default |
+|---|---|---|---|
+| `BOUNCE` | loop8 P3 bounce — 55% off peak, credible vol ≥ $500, ≤1 nuke | stop 50 / arm 1.5x / trail 25 / hard 10x / 8h | on |
+| `V1` | vol/MC churn — trailing 30m volume ≥ 0.5 × MC, ≤1 nuke | stop 60 / arm 1.5x / trail 25 / hard 20x / 8h | on |
+| `H1` | base-entry population + distributed holders (≥50 holders, top10 ≤50%, top1 ≤20%) | stop 60 / arm 1.5x / trail 25 / hard 10x / 8h | on |
+| `H0` | base-entry population, no holder gate (the control for H1) | as H1 | off |
+| `H2` | loose holder gate (≥30 holders, top10 ≤65%, top1 ≤30%) | as H1 | off |
+
+Books are **paper-only** — they refuse to start in live mode — and need the Birdeye
+websocket feed, because every rule reads candles. The honest caveats are in the
+`bot/books.py` docstring; the short version: a candle trigger must be fresh to be traded,
+V1's launchpad-universe filter cannot be applied live, an unknown holder metric passes
+rather than rejects, and fills are Jupiter-quoted instead of the backtest's candle model.
+
+Self-check (offline, no network): `python booktest.py`.
+
 ## Wallet / insider screening
 
 Each candidate's holder base is screened for rug-shaped ownership before entry
@@ -183,7 +229,9 @@ bot/
   jupiter.py         quote + swap-transaction API client
   execution.py       PaperBroker (simulated) / LiveBroker (solders + JSON-RPC)
   portfolio.py       SQLite positions/fills ledger, daily PnL, cooldowns
+  books.py           per-strategy paper books: one enforced bankroll each
   main.py            cycle orchestration, logging, report
+booktest.py          offline self-check for the strategy books
 ```
 
 ## Known limitations
