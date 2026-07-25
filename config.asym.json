@@ -92,7 +92,8 @@
     "tracked_path": "reports/tracked_wallets.json"
   },
   "books": {
-    "enabled": true,
+    "_note": "OFF by default: the live setup runs one process per strategy (config.bounce.json / config.holder.json), each with its own 1 SOL. Enabling this too would trade BOUNCE/H1 twice.",
+    "enabled": false,
     "starting_balance_sol": 1.0,
     "position_size_sol": 0.25,
     "max_positions": 3,
