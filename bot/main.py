@@ -79,6 +79,16 @@ class Bot:
             return
 
         frac = action["fraction"]
+        if frac <= 0:
+            # Arm-only stage. The bounce/holder exit doctrines arm their
+            # trailing stop at 1.5x without banking anything, and the live
+            # trail only activates once tp_stage > 0 - so advancing the stage
+            # IS the whole action. Falling through would fire a 1-unit dust
+            # sell just to move a counter.
+            self.db.set_progress(pos, peak, pos.tp_stage + 1)
+            log.info("ARM %-12s %s | trailing stop %.0f%% now live",
+                     pos.symbol, action["why"], self.cfg.trailing_stop_pct)
+            return
         to_sell = pos.tokens_raw if frac >= 1.0 else max(1, int(pos.tokens_raw * frac))
         res = self.broker.sell(pos.mint, to_sell)
         if res is None:
@@ -225,17 +235,23 @@ class Bot:
         self.try_enter()
 
     def run(self, once: bool = False) -> None:
-        tps = "/".join(f"{tp['multiple']}x" for tp in self.cfg.take_profits)
+        tps = "/".join(
+            f"{tp['multiple']}x" + ("(arm)" if float(tp["sell_fraction_of_remaining"]) <= 0 else "")
+            for tp in self.cfg.take_profits
+        )
         log.info(
-            "memebot starting | mode=%s | size=%.3f SOL | max_positions=%d | stop=%.0f%% | tp=%s | hard_tp=%.1fx",
-            self.cfg.mode, self.cfg.position_size_sol, self.cfg.max_positions,
-            self.cfg.stop_loss_pct, tps, self.cfg.hard_tp_multiple,
+            "memebot starting | strategy=%s | mode=%s | size=%.3f SOL | max_positions=%d "
+            "| stop=%.0f%% | tp=%s | trail=%.0f%% | hard_tp=%.1fx | db=%s",
+            self.cfg.strategy, self.cfg.mode, self.cfg.position_size_sol,
+            self.cfg.max_positions, self.cfg.stop_loss_pct, tps,
+            self.cfg.trailing_stop_pct, self.cfg.hard_tp_multiple, self.cfg.db_path,
         )
         if self.cfg.mode != "live":
             log.info("PAPER MODE - simulated fills on live quotes, no real funds")
         if self.feed:
             log.info("BIRDEYE WS ON - listing discovery + live 1m candles + "
-                     "backtest base-entry gate (max %d price subs)", self.cfg.ws_max_price_subs)
+                     "%s entry gate (max %d price subs)",
+                     self.cfg.ws_setup_family, self.cfg.ws_max_price_subs)
         try:
             while True:
                 started = time.time()
