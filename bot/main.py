@@ -42,6 +42,13 @@ class Bot:
             from .birdeye_ws import BirdeyeFeed
             self.feed = BirdeyeFeed(cfg)
             self.feed.start()
+        # Strategy books: one enforced bankroll per research strategy, riding
+        # this bot's candidate stream. They keep their own positions under
+        # their own Portfolio mode and never touch the base ledger.
+        self.books = None
+        if cfg.books_enabled:
+            from .books import BookBench
+            self.books = BookBench.build(cfg, self.session, self.broker, self.feed)
 
     # ------------------------------------------------------------------
     # Open-position management
@@ -105,7 +112,33 @@ class Bot:
     # ------------------------------------------------------------------
     # New entries
     # ------------------------------------------------------------------
-    def try_enter(self) -> None:
+    def base_can_enter(self) -> bool:
+        """The two conditions try_enter() checks before it does any work."""
+        if self.cfg.max_positions - len(self.db.open_positions()) <= 0:
+            return False
+        return self.db.realized_today_lamports() > -self.cfg.daily_loss_limit_lamports
+
+    def discover(self) -> list:
+        """This cycle's candidate stream, discovered once and shared with the
+        strategy books.
+
+        Websocket promotion stays gated on the base strategy's capacity, the
+        way it was before books existed: promotion is single-shot (a token is
+        offered exactly once), so promoting while base is full would quietly
+        spend candidates base would otherwise have seen on its next free
+        slot. Books therefore see only scanner candidates during a base
+        saturation - the base strategy's funnel is not theirs to spend. The
+        `known` set stays base-only for the same reason: a mint a book holds
+        must not drop out of the base funnel."""
+        held = {p.mint for p in self.db.open_positions()}
+        candidates = scanner.discover(self.session, self.cfg)
+        if self.feed and self.cfg.ws_discovery and self.base_can_enter():
+            candidates.extend(self.feed.promote_candidates(
+                self.session, known={c.mint for c in candidates} | held))
+        self.db.record_candidates(candidates)
+        return candidates
+
+    def try_enter(self, candidates: list) -> None:
         open_ps = self.db.open_positions()
         slots = self.cfg.max_positions - len(open_ps)
         if slots <= 0:
@@ -117,11 +150,6 @@ class Bot:
             return
 
         held = {p.mint for p in open_ps}
-        candidates = scanner.discover(self.session, self.cfg)
-        if self.feed and self.cfg.ws_discovery:
-            candidates.extend(self.feed.promote_candidates(
-                self.session, known={c.mint for c in candidates} | held))
-        self.db.record_candidates(candidates)
         if self.cfg.narrative_keywords:
             if self.cfg.narrative_require:
                 candidates = [c for c in candidates if strategy.narrative_match(c.symbol, self.cfg)]
@@ -163,6 +191,8 @@ class Bot:
                 continue
             if self.cfg.insiders_enabled:
                 irep = insiders.check(self.session, cand.mint, self.cfg)
+                if self.books:
+                    self.books.note_insider_report(cand.mint, irep)  # reuse, don't refetch
                 ok, ins_why = insiders.verdict(irep, self.cfg)
                 if not ok:
                     if self.cfg.insiders_shadow:
@@ -225,10 +255,23 @@ class Bot:
 
     # ------------------------------------------------------------------
     def cycle(self) -> None:
+        if self.books:
+            self.books.begin_cycle()
         if self.feed:
-            self.feed.note_open_positions([p.mint for p in self.db.open_positions()])
+            mints = [p.mint for p in self.db.open_positions()]
+            if self.books:
+                mints.extend(self.books.open_mints())
+            self.feed.note_open_positions(mints)
         self.manage_positions()
-        self.try_enter()
+        if self.books:
+            self.books.manage()
+        # one discovery pass feeds the base strategy and every book; base
+        # gets its own copy so its narrative sort cannot reorder the stream
+        # underneath them
+        candidates = self.discover()
+        self.try_enter(list(candidates))
+        if self.books:
+            self.books.step(candidates)
 
     def run(self, once: bool = False) -> None:
         tps = "/".join(f"{tp['multiple']}x" for tp in self.cfg.take_profits)
@@ -242,6 +285,10 @@ class Bot:
         if self.feed:
             log.info("BIRDEYE WS ON - listing discovery + live 1m candles + "
                      "backtest base-entry gate (max %d price subs)", self.cfg.ws_max_price_subs)
+        if self.books:
+            log.info("STRATEGY BOOKS ON - %d independent bankrolls beside the base strategy",
+                     len(self.books.books))
+            self.books.log_startup()
         try:
             while True:
                 started = time.time()

@@ -263,6 +263,9 @@
   <div class="sect"><h2>STRATEGY LAB</h2><span class="jp">戦術研究室</span></div>
   <div id="stratlab"></div>
 
+  <div class="sect"><h2>STRATEGY BOOKS</h2><span class="jp">独立資金・戦略別</span></div>
+  <div id="books"></div>
+
   <div class="sect"><h2>R&amp;D OPERATIONS</h2><span class="jp">作戦進行状況</span></div>
   <div class="panel"><div class="ptab"><span>PIPELINE — SAMPLE FETCHES &amp; SWEEPS</span><span class="verdict ok" id="v-ops">IDLE</span></div>
     <div class="pbody" id="ops"></div></div>
@@ -867,6 +870,76 @@ function renderStrategies(st){
         HONEST FILLS · DEAD-TOKEN REMAINDERS = 0 · 4% COST · SAMPLE NEVER USED FOR TUNING</div></div></div>`;
 }
 
+/* STRATEGY BOOKS: one enforced bankroll per research strategy, running
+   beside the base paper trial. Each book starts at its own 1 SOL and can
+   only spend what it still has. */
+function bookExits(e){
+  return `stop ${e.stop}% · arm ${e.arm}x · trail ${e.trail}% · hard ${e.hard}x · hold ${Math.round(e.hold/60)}h`;
+}
+
+function renderBooks(st){
+  const el = $('books');
+  const bk = st.books;
+  if (!bk || !bk.books || !bk.books.length){
+    el.innerHTML = `<div class="panel cage">STRATEGY BOOKS OFFLINE — enable <code>books</code> in config.asym.json
+      and restart the bot (dashboard also needs a restart).<span class="jp">独立資金未配備</span></div>`;
+    return;
+  }
+  const tiles = bk.books.map(b => {
+    const cls = b.balance_sol > b.start_sol ? 'pos' : b.balance_sol < b.start_sol ? 'neg' : '';
+    const chip = b.open ? `<span class="chip good">▰ ${b.open} OPEN</span>`
+                        : `<span class="chip warn">待機 IDLE</span>`;
+    return `<div class="panel tile"><div class="lbl">${esc(b.key)} BOOK ${chip}</div>
+      <div class="big ${cls}">${b.balance_sol.toFixed(3)}<span style="font-size:13px"> SOL</span></div>
+      <div class="sub">cash ${b.cash_sol.toFixed(3)} · start ${b.start_sol.toFixed(2)}${b.balance_est ? ' · ~quote pending' : ''}<br>
+        ${b.count} closed${b.win_rate === null ? '' : ' · wr ' + b.win_rate + '% · avg ' + (b.avg_multiple || 0).toFixed(2) + 'x'}<br>
+        ${esc(b.label)}</div></div>`;
+  }).join('');
+
+  const rows = bk.books.map(b => {
+    const cls = b.balance_sol >= b.start_sol ? 'pos' : 'neg';
+    return `<tr><td>${stratChip(b.key)}</td><td>${esc(b.label)}</td>
+      <td class="num"><span class="${cls}">${b.balance_sol.toFixed(3)}</span></td>
+      <td class="num">${b.cash_sol.toFixed(3)}</td>
+      <td class="num">${b.open}/${b.max_positions}</td>
+      <td class="num">${b.count}</td>
+      <td class="num">${b.win_rate === null ? '—' : b.win_rate + '%'}</td>
+      <td class="num">${b.avg_multiple === null ? '—' : b.avg_multiple.toFixed(2) + 'x'}</td>
+      <td style="color:var(--ink3)">${bookExits(b.exits)}</td></tr>`;
+  }).join('');
+
+  const openRows = bk.books.flatMap(b => (b.open_rows || []).map(o =>
+    `<tr><td>${stratChip(b.key)}</td><td>${esc(o.symbol)}</td>
+      <td class="num">${o.multiple === null ? 'quote…' : o.multiple.toFixed(2) + 'x'}</td>
+      <td class="num">${o.peak.toFixed(2)}x</td>
+      <td>${o.armed ? '<span class="chip good">ARMED</span>' : '<span class="chip warn">PRE-ARM</span>'}</td>
+      <td class="num">${o.age_min}m</td><td class="num">${o.spent_sol.toFixed(3)}</td></tr>`)).join('');
+
+  const closes = bk.books.flatMap(b => (b.recent || []))
+    .sort((a, c) => String(c.closed_at || '').localeCompare(String(a.closed_at || ''))).slice(0, 10);
+  const closeRows = closes.map(r => sortieRow(r, r.strategy)).join('');
+
+  el.innerHTML = `<div class="tiles" style="margin-bottom:14px">${tiles}</div>
+    <div class="panel"><div class="ptab"><span>INDEPENDENT BANKROLLS — ${bk.start_sol.toFixed(2)} SOL EACH, CASH ENFORCED</span>
+      <span class="verdict ok">LIVE PAPER 稼働</span></div>
+    <div class="pbody"><table><thead><tr><th>KEY</th><th>STRATEGY</th><th style="text-align:right">BALANCE</th>
+      <th style="text-align:right">CASH</th><th style="text-align:right">OPEN</th><th style="text-align:right">CLOSED</th>
+      <th style="text-align:right">WR</th><th style="text-align:right">AVG</th><th>EXIT DOCTRINE</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+      <div style="margin-top:9px;color:var(--ink3);letter-spacing:2px;font-size:10.5px">BOOK POSITIONS — OPEN</div>
+      <table style="margin-top:4px"><thead><tr><th>BOOK</th><th>TARGET</th><th style="text-align:right">MULT</th>
+        <th style="text-align:right">PEAK</th><th>TRAIL</th><th style="text-align:right">AGE</th>
+        <th style="text-align:right">SPENT</th></tr></thead>
+        <tbody>${openRows || '<tr><td colspan="7" class="empty-row">NO BOOK POSITIONS OPEN</td></tr>'}</tbody></table>
+      <div style="margin-top:9px;color:var(--ink3);letter-spacing:2px;font-size:10.5px">BOOK SORTIES — LAST CLOSES</div>
+      <table style="margin-top:4px"><thead><tr><th>CLOSED (UTC)</th><th>TARGET</th><th>STRAT</th>
+        <th style="text-align:right">MULT</th><th style="text-align:right">PNL (SOL)</th><th>RESULT</th></tr></thead>
+        <tbody>${closeRows || '<tr><td colspan="6" class="empty-row">NO BOOK SORTIES CLOSED YET</td></tr>'}</tbody></table>
+      <div style="margin-top:8px;color:var(--ink3);font-size:10.5px;letter-spacing:1px">
+        SEPARATE LEDGERS · BASE STRATEGY UNTOUCHED · ENTRY RULES IMPORTED VERBATIM FROM THE PRE-REGISTERED LAB</div>
+    </div></div>`;
+}
+
 /* SORTIE LOG view tabs: LIVE PAPER <-> BACKTEST. Explicit pick sticks (and
    survives reloads via localStorage); before any pick, auto-prefer live
    closes and fall back to the backtest journal — the old behavior. */
@@ -916,7 +989,7 @@ function render(st){
   badge.className = 'badge ' + (live ? 'live' : 'sim');
   badge.textContent = live ? '⚠ COMBAT MODE — LIVE FUNDS' : 'SIMULATION MODE — PAPER';
   $('foot-mode').textContent = live ? '⚠ COMBAT MODE — REAL FUNDS AT RISK' : 'SIMULATION — NO REAL FUNDS AT RISK';
-  renderAlert(st); renderMagi(st); renderUnits(st); renderTiles(st); renderStrategies(st); renderOps(st); renderAsym(st); renderSorties(st); renderTerm(st); renderRejFx(st); renderUpdates(st); renderWallets(st);
+  renderAlert(st); renderMagi(st); renderUnits(st); renderTiles(st); renderStrategies(st); renderBooks(st); renderOps(st); renderAsym(st); renderSorties(st); renderTerm(st); renderRejFx(st); renderUpdates(st); renderWallets(st);
 }
 
 async function refresh(){

@@ -176,6 +176,17 @@ class Portfolio:
         ).fetchone()
         return int(row["pnl"])
 
+    def net_flow_lamports(self) -> int:
+        """Every lamport this mode's positions have returned minus every one
+        they consumed, open positions included. A strategy book's uninvested
+        cash is its starting bankroll plus this."""
+        row = self.conn.execute(
+            "SELECT COALESCE(SUM(sol_received - sol_spent), 0) AS flow FROM positions"
+            " WHERE mode=?",
+            (self.mode,),
+        ).fetchone()
+        return int(row["flow"])
+
     def recently_traded(self, mint: str, cooldown_min: float) -> bool:
         row = self.conn.execute(
             "SELECT closed_at FROM positions WHERE mint=? AND mode=? AND closed_at IS NOT NULL"

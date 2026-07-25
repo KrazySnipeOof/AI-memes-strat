@@ -434,6 +434,72 @@ def asym_state():
     }
 
 
+def books_state():
+    """Strategy books (bot/books.py): one enforced bankroll per research
+    strategy, read from the paper bot's sqlite under each book's own
+    Portfolio mode. The base book (mode 'paper') is never touched by any of
+    this - it is reported by asym_state() exactly as before."""
+    if acfg is None or not acfg.books_enabled or not os.path.exists(acfg.db_path):
+        return None
+    from bot.books import BOOK_DEFS, book_mode
+
+    rows = []
+    for key, defn in BOOK_DEFS.items():
+        over = acfg.books_overrides.get(key) or {}
+        if not bool(over.get("enabled", defn["enabled"])):
+            continue
+        db = Portfolio(acfg.db_path, book_mode(key))
+        start_sol = float(over.get("starting_balance_sol", acfg.books_start_sol))
+        cash_lamports = int(start_sol * LAMPORTS_PER_SOL) + db.net_flow_lamports()
+
+        open_rows, open_value, quotes_missing = [], 0, False
+        for pos in db.open_positions():
+            val = cache.value(pos.mint, pos.tokens_raw)
+            missing = val is None
+            if missing:  # no live quote: hold the position at its remaining cost basis
+                quotes_missing = True
+                val = max(0, pos.sol_spent - pos.sol_received)
+            open_value += val
+            open_rows.append({
+                "symbol": pos.symbol, "age_min": round(pos.age_min, 1),
+                "spent_sol": round(sol(pos.sol_spent), 4),
+                "multiple": None if missing else round(
+                    (pos.sol_received + val) / pos.sol_spent if pos.sol_spent else 0.0, 3),
+                "peak": round(pos.peak_multiple, 2),
+                "armed": bool(pos.tp_stage),
+            })
+
+        closed = db.closed_positions(limit=500)
+        wins = [p for p in closed if p.sol_received > p.sol_spent]
+        mults = [p.sol_received / p.sol_spent for p in closed if p.sol_spent]
+        rows.append({
+            "key": key,
+            "label": defn["label"],
+            "lab": defn.get("lab"),
+            "exits": defn["exits"],
+            "start_sol": start_sol,
+            "cash_sol": round(sol(cash_lamports), 4),
+            "balance_sol": round(sol(cash_lamports + open_value), 4),
+            "balance_est": quotes_missing,
+            "open": len(open_rows),
+            "max_positions": int(over.get("max_positions", acfg.books_max_positions)),
+            "count": len(closed),
+            "wins": len(wins),
+            "win_rate": round(100 * len(wins) / len(closed), 1) if closed else None,
+            "avg_multiple": round(statistics.mean(mults), 2) if mults else None,
+            "realized_pnl_sol": round(sol(sum(p.sol_received - p.sol_spent for p in closed)), 4),
+            "open_rows": open_rows,
+            "recent": [{"closed_at": p.closed_at, "symbol": p.symbol,
+                        "multiple": round(p.sol_received / p.sol_spent, 2) if p.sol_spent else 0,
+                        "pnl_sol": round(sol(p.sol_received - p.sol_spent), 4),
+                        "reason": p.exit_reason or "?", "strategy": key}
+                       for p in closed[:6]],
+        })
+    if not rows:
+        return None
+    return {"start_sol": acfg.books_start_sol, "books": rows}
+
+
 REJECT_RE = re.compile(r"^(\S+ \S+) \w+\s+memebot: reject (\S+)\s+(.+)$")
 
 
@@ -573,6 +639,7 @@ def build_state() -> dict:
         "realized_today_sol": round(sol(db.realized_today_lamports()), 4),
         "wallet": wallet_info(),
         "asym": asym_state(),
+        "books": books_state(),
         "wallets": wallets_state(),
         "ops": ops_progress(),
         "strategy_lab": _read_json(os.path.join("reports", "strategy_lab.json")),

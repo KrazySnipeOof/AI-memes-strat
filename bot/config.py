@@ -119,6 +119,24 @@ class Config:
         self.wt_tracked_path: str = wt.get(
             "tracked_path", os.path.join("reports", "tracked_wallets.json"))
 
+        # Strategy books (bot/books.py) - one enforced bankroll per research
+        # strategy, riding the same candidate stream. enabled: false leaves
+        # the base strategy's path byte-identical; the base book never uses
+        # any of these numbers.
+        bk = raw.get("books", {})
+        self.books_enabled: bool = bool(bk.get("enabled", False))
+        self.books_start_sol: float = float(bk.get("starting_balance_sol", 1.0))
+        self.books_position_size_sol: float = float(
+            bk.get("position_size_sol", self.position_size_sol))
+        self.books_max_positions: int = int(bk.get("max_positions", self.max_positions))
+        self.books_max_entries_per_cycle: int = int(bk.get("max_entries_per_cycle", 1))
+        self.books_max_gate_checks_per_cycle: int = int(bk.get("max_gate_checks_per_cycle", 8))
+        self.books_max_backfills_per_cycle: int = int(bk.get("max_backfills_per_cycle", 4))
+        self.books_daily_loss_limit_sol: float = float(
+            bk.get("daily_loss_limit_sol", self.daily_loss_limit_sol))
+        self.books_max_trigger_age_sec: int = int(bk.get("max_trigger_age_sec", 300))
+        self.books_overrides: Dict[str, Any] = bk.get("strategies", {}) or {}
+
     @property
     def position_size_lamports(self) -> int:
         return int(self.position_size_sol * LAMPORTS_PER_SOL)
