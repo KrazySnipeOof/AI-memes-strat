@@ -21,8 +21,10 @@ sys.path.insert(0, ROOT)
 
 import bdusage
 import blcards
+import walletpage
 from backtest import BLOCKLIST_PATH, MANUAL_BLOCKLIST_PATH
 from bot import jupiter
+from bot import wallets as botwallets
 from bot.config import Config, LAMPORTS_PER_SOL
 from bot.portfolio import Portfolio
 from bot.util import iso_now, load_dotenv, make_session
@@ -153,6 +155,28 @@ def _read_json(path: str):
         return None
 
 
+WS_STATE_PATH = os.path.join("reports", "ws_state.json")
+_ws_candles_cache = {"mtime": 0.0, "by_mint": {}}
+
+
+def ws_candles(mint: str, limit: int = 60) -> list:
+    """Last `limit` 1m candles [[ts,o,h,l,c,v_usd],...] for a mint, from the
+    bot's WS snapshot. Zero Birdeye CU: the feed maintains the store; the
+    multi-MB file is re-parsed only when its mtime changes (~every 60s)."""
+    try:
+        mtime = os.path.getmtime(WS_STATE_PATH)
+    except OSError:
+        return []
+    if mtime != _ws_candles_cache["mtime"]:
+        snap = _read_json(WS_STATE_PATH) or {}
+        _ws_candles_cache["by_mint"] = snap.get("candles") or {}
+        _ws_candles_cache["mtime"] = mtime
+    rows = _ws_candles_cache["by_mint"].get(mint)
+    if not rows:
+        return []
+    return sorted(rows.values(), key=lambda r: r[0])[-limit:]
+
+
 _bl_lock = threading.Lock()
 
 
@@ -218,6 +242,49 @@ def mc_refresh_status() -> dict:
     except OSError:
         out["log_tail"] = []
     return out
+
+
+_ct_lock = threading.Lock()
+_ct_state = {"proc": None, "started": 0.0}
+CT_LOG = os.path.join("reports", "copytrade_run.log")
+CT_PROGRESS = os.path.join("reports", "copytrade_progress.json")
+
+
+def ct_run_start() -> dict:
+    """Spawn `python copytrade_backtest.py` (one at a time). It rewrites
+    reports/copytrade_backtest.json + emits copytrade_progress.json for the
+    WALLETS-tab progress bar. OHLCV is cached, so re-runs are fast."""
+    with _ct_lock:
+        p = _ct_state["proc"]
+        if p is not None and p.poll() is None:
+            return {"ok": True, "already_running": True}
+        os.makedirs("reports", exist_ok=True)
+        logf = open(CT_LOG, "w", encoding="utf-8")
+        _ct_state["proc"] = subprocess.Popen(
+            [sys.executable, os.path.join(ROOT, "copytrade_backtest.py")],
+            cwd=ROOT, stdout=logf, stderr=subprocess.STDOUT)
+        _ct_state["started"] = time.time()
+        return {"ok": True, "already_running": False}
+
+
+def ct_progress() -> dict:
+    """Live progress for the copy-trade backtest. Merges the process liveness
+    with the progress file the script writes; 'stalled' if the file is old and
+    no process is tracked."""
+    prog = _read_json(CT_PROGRESS) or {"phase": "idle", "pct": 0, "status": "idle"}
+    p = _ct_state["proc"]
+    running = p is not None and p.poll() is None
+    age = time.time() - prog.get("updated", 0) if prog.get("updated") else None
+    if prog.get("status") == "done":
+        prog["state"] = "done"
+    elif running or (age is not None and age < 30):
+        prog["state"] = "running"
+    elif prog.get("phase") == "idle":
+        prog["state"] = "idle"
+    else:
+        prog["state"] = "stalled"
+    prog["age_sec"] = round(age) if age is not None else None
+    return prog
 
 
 def ops_progress():
@@ -406,6 +473,15 @@ def reject_counts(lines) -> dict:
     return out
 
 
+def wallets_state():
+    """Harvested top-trader wallet stats (bot/wallets.py sightings db)."""
+    c = acfg or cfg
+    try:
+        return botwallets.snapshot(c.wt_db_path, c.wt_tracked_path)
+    except Exception:
+        return None
+
+
 def build_state() -> dict:
     db = Portfolio(cfg.db_path, cfg.mode)
     lines = read_log_lines(cfg.log_path, max_bytes=524288)
@@ -447,6 +523,7 @@ def build_state() -> dict:
             "value_sol": round(sol(value or 0), 4),
             "quote_ok": quote_ok,
             "spark": spark,
+            "candles": ws_candles(p.mint),
         })
 
     closed = db.closed_positions(limit=200)
@@ -469,7 +546,9 @@ def build_state() -> dict:
     }
 
     journal = _read_json(os.path.join("reports", "trade_journal.json")) or {}
+    px = sol_usd_price()
     return {
+        "sol_price_usd": round(px, 2) if px is not None else None,
         "now": iso_now(),
         "mode": cfg.mode,
         "bot_status": bot_status(),
@@ -494,7 +573,9 @@ def build_state() -> dict:
         "realized_today_sol": round(sol(db.realized_today_lamports()), 4),
         "wallet": wallet_info(),
         "asym": asym_state(),
+        "wallets": wallets_state(),
         "ops": ops_progress(),
+        "strategy_lab": _read_json(os.path.join("reports", "strategy_lab.json")),
         "backtest_sorties": journal.get("rows", [])[:10],
         "backtest_strategy": journal.get("strategy"),
         "log_tail": lines[-30:],
@@ -531,6 +612,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, "text/html; charset=utf-8", blcards.render_page().encode("utf-8"))
             except Exception as exc:
                 self._send(500, "text/plain", f"blacklist page error: {exc}".encode())
+        elif self.path == "/wallets":
+            try:
+                self._send(200, "text/html; charset=utf-8", walletpage.render_page().encode("utf-8"))
+            except Exception as exc:
+                self._send(500, "text/plain", f"wallets page error: {exc}".encode())
         elif self.path == "/api/blacklist":
             self._send(200, "application/json", json.dumps({
                 "manual": _read_json(MANUAL_BLOCKLIST_PATH) or {},
@@ -538,6 +624,8 @@ class Handler(BaseHTTPRequestHandler):
             }).encode())
         elif self.path == "/api/mc/refresh":
             self._send(200, "application/json", json.dumps(mc_refresh_status()).encode())
+        elif self.path == "/api/copytrade":
+            self._send(200, "application/json", json.dumps(ct_progress()).encode())
         elif self.path == "/api/bdusage":
             try:
                 snap = bdusage.snapshot()
@@ -563,6 +651,11 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/mc/refresh":
             try:
                 self._send(200, "application/json", json.dumps(mc_refresh_start()).encode())
+            except Exception as exc:
+                self._send(500, "application/json", json.dumps({"error": str(exc)}).encode())
+        elif self.path == "/api/copytrade/run":
+            try:
+                self._send(200, "application/json", json.dumps(ct_run_start()).encode())
             except Exception as exc:
                 self._send(500, "application/json", json.dumps({"error": str(exc)}).encode())
         else:

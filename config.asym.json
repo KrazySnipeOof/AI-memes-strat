@@ -85,5 +85,10 @@
     "min_listing_liquidity_usd": 500,
     "min_cum_vol_usd": 8000,
     "persist_state": true
+  },
+  "wallet_tracker": {
+    "enabled": true,
+    "db_path": "wallets.sqlite",
+    "tracked_path": "reports/tracked_wallets.json"
   }
 }

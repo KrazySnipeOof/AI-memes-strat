@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import time
 
-from . import insiders, jupiter, safety, scanner, smartmoney, strategy
+from . import insiders, jupiter, safety, scanner, smartmoney, strategy, wallets
 from .config import Config, LAMPORTS_PER_SOL
 from .execution import LiveBroker, PaperBroker
 from .portfolio import Portfolio, Position
@@ -35,6 +35,7 @@ class Bot:
         self.cfg = cfg
         self.session = make_session()
         self.db = Portfolio(cfg.db_path, cfg.mode)
+        wallets.init(cfg)
         self.broker = LiveBroker(cfg, self.session) if cfg.mode == "live" else PaperBroker(cfg, self.session)
         self.feed = None
         if cfg.ws_enabled:
@@ -174,7 +175,8 @@ class Bot:
             else:
                 ins_why = "insider check disabled"
             if self.cfg.smart_money_enabled:
-                sm_rep = smartmoney.check(self.session, cand.mint, self.cfg)
+                sm_rep = smartmoney.check(self.session, cand.mint, self.cfg,
+                                          symbol=cand.symbol)
                 ok, sm_why = smartmoney.verdict(sm_rep, self.cfg)
                 if not ok:
                     if self.cfg.smart_money_shadow:
@@ -186,6 +188,10 @@ class Bot:
                         continue
             else:
                 sm_why = "smart-money check disabled"
+            hits = wallets.tracked_for_mint(cand.mint)
+            if hits:
+                log.info("shadow %-12s tracked-wallet: %s", cand.symbol, ", ".join(hits))
+                sm_why = f"{sm_why} | TRACKED-WALLET: {', '.join(hits)}"
             ok, rt_why = safety.roundtrip_check(
                 self.session, cand.mint, self.cfg.position_size_lamports, self.cfg
             )

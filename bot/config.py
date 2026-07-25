@@ -111,6 +111,14 @@ class Config:
         self.ws_min_cum_vol_usd: float = float(w.get("min_cum_vol_usd", 8_000))
         self.ws_persist_state: bool = bool(w.get("persist_state", True))
 
+        # Wallet harvester (bot/wallets.py) - observational only; enabled: false
+        # leaves the smart-money gate's data path byte-identical.
+        wt = raw.get("wallet_tracker", {})
+        self.wt_enabled: bool = bool(wt.get("enabled", False))
+        self.wt_db_path: str = wt.get("db_path", "wallets.sqlite")
+        self.wt_tracked_path: str = wt.get(
+            "tracked_path", os.path.join("reports", "tracked_wallets.json"))
+
     @property
     def position_size_lamports(self) -> int:
         return int(self.position_size_sol * LAMPORTS_PER_SOL)
