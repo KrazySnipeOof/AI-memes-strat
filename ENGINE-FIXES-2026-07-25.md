@@ -101,37 +101,71 @@ delivered** - the fix reproduces reality, the old engine did not.
 ## The BASE remake
 
 The ladder was never the main problem; the entry age and the censored engine
-were. What actually changed BASE's numbers was capping the hold:
+were. Capping the hold does help - fewer positions die mid-position - but it
+does not rescue the strategy. Exact before/after on **the same sample that
+produced the original 1.6x** (`reports/bd_tokens.json`, entry age 30m, min vol
+$8k, cost 4%):
 
-| BASE ladder (corrected engine) | WR | avg | median | censored |
-|---|---|---|---|---|
-| stop 40 / bank 30% @1.35x / trail 30% / hard 20x / **hold 8h** | 9% | 1.19 | 0.39 | 75.4% |
-| same ladder, **hold 3h** | **26%** | **1.47** | 0.39 | **53.8%** |
+| | n | WR | avg | median | censored |
+|---|---|---|---|---|---|
+| OLD engine + OLD ladder (8h) — *the 1.6x number* | 310 | 84.8% | **1.607** | 1.291 | 74.5% |
+| NEW engine + OLD ladder (8h) | 314 | 15.9% | 0.657 | 0.389 | 74.2% |
+| **NEW engine + NEW ladder (3h) — shipped** | 314 | **25.5%** | **0.741** | 0.389 | **63.1%** |
 
-A shorter hold means fewer positions die mid-position - censoring falls 75.4% ->
-53.8% and WR nearly triples. Entry-age sensitivity on the corrected engine holds
-across 30-120m (train/valid 1.78/1.31 at 30m, 1.37/1.40 at 60m, 0.97/1.17 at
-120m), so the `max_age_min: 120` ceiling is at the edge of what the data
-supports - **30-60m is the better-supported zone** if it is ever tightened.
+The 3h cap cuts censoring 74.2% -> 63.1% and lifts WR 15.9% -> 25.5%, but the
+average only moves 0.657 -> 0.741. **BASE is negative-expectancy on the full
+sample, and the remake does not fix that** - it makes a bad strategy less bad.
 
-Alternative ladders were fitted on a TRAIN half with VALID held out. A scalp
-(all out at 1.20x, stop 30%, hold 3h) gives much steadier trade-by-trade
-behaviour - 73.8% WR, median 1.152, only 12/65 total losses - but averages
-**0.898**, below breakeven. Entry liveness gates (recent volume + traded-candle
-continuity) were swept and did not discriminate: 32 -> 29 trades with the alive
-fraction unchanged.
+Entry-age sensitivity holds across 30-120m, so the `max_age_min: 120` ceiling is
+at the edge of what the data supports - **30-60m is the better-supported zone**
+if it is ever tightened. Entry liveness gates (recent volume + traded-candle
+continuity) were swept and did not discriminate.
 
-### Read this before trusting the remade BASE
+### Correction: the fresh sample was tail luck
 
-The remade ladder averages above 1.0, but on a **26% win rate with a 0.39
-median** - 35% of trades are total losses and the average is carried by a
-handful of 20x hard-take-profits in n=65. Removing the top 2 trades leaves
-1.150, so it is not one lucky ticket, but it is the same tail-dependent shape
-that just lost 24% of the book live. n=65 on one fresh sample is not proof.
+An earlier pass on `bd_tokens_fresh.json` (n=65) read the remade ladder at
+**1.47x / 26% WR** and it was reported as clearing breakeven. The full sample
+(n=314, 5x larger, longer window) reads **0.741x** for the identical ladder. The
+fresh number was carried by a few 20x hard-take-profits that dilute at scale -
+the larger sample has only 4 of them in 314 trades. **Treat 0.741x as the
+number.** Both samples were checked for fetch-truncation and neither shows it
+(biggest single end-hour holds 1.6% and 6.2% of tokens respectively), so the
+gap is sample size and window, not a data artifact.
 
 The fresh-OOT lab still ranks **BOUNCE (1.135x @ 57.4% WR, n=54)** and
 **H1/HOLDER (1.028x @ 60.7%, n=28)** above BASE, and both win by being right
 often rather than by hitting a rare 20x. Nothing here changes that ordering.
-Validating the remake needs a **freshly fetched window** with a pre-registered
+
+## Monte Carlo, re-run on the corrected pool
+
+`python montecarlo.py --refresh-trades` regenerated the pool through the fixed
+`simulate()` (314 trades, WR 25.5%, avg 0.741, median 0.389; exit mix
+`no_coverage=198, time_stop=65, trailing_stop=38, stop_loss=9, hard_tp=4`).
+
+| | pre-fix | corrected |
+|---|---|---|
+| pool avg | 1.607x | **0.741x** |
+| EV per trade | positive | **-25.9% of stake** |
+| Sharpe / Sortino | positive | **-0.16 / -0.38** |
+| edge margin | +36% extra cost tolerated | **-35% — the edge is already gone** |
+
+10,000 paths x 100 trades, 0.25 SOL stake from 5.00 SOL:
+
+| scenario | median final | P(loss) | P(DD>=50%) |
+|---|---|---|---|
+| iid | **0.00 SOL** | 94.1% | 97.5% |
+| block10 | 0.00 SOL | 95.9% | 98.2% |
+| stress (+5% cost) | 0.00 SOL | 96.2% | 98.6% |
+| no_top (top 5% removed) | 0.00 SOL | **100.0%** | 100.0% |
+| frac5 (5% of equity) | 0.97 SOL | 98.1% | 99.3% |
+
+**The prior Monte Carlo conclusion does not survive.** It previously read "path
+risk negligible, all risk is distributional, 36% edge margin" - computed on a
+pool that was 74.5% censored trades marked at their last price. On the corrected
+pool there is no edge to have path risk *around*: the median path is ruin in
+every fixed-stake scenario, and fractional sizing only converts ruin into a slow
+bleed. `no_top` at 100% loss is the same tail-dependence that failed live.
+
+Validating any remake needs a **freshly fetched window** with a pre-registered
 eval - `reports/bd_tokens_fresh.json` has now been used for selection and can no
 longer serve as its own out-of-sample.
