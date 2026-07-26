@@ -259,12 +259,11 @@ numbers this work disproved.**
 Against the paper record the harsh censoring model was as wrong as the thing it
 replaced, in the other direction:
 
-| | live paper (19 closed) | `coverage=loss` |
+| | live paper (BASE, n=14) | `coverage=loss` |
 |---|---|---|
-| trades ending under 0.10 | **0 of 19** | **33%** |
-| worst single outcome | 0.375 | 0.000 |
-| quote failures | **0** | n/a |
-| BASE median | 0.599 | 0.389 |
+| trades ending under 0.10 | **7.1%** | **33%** |
+| BASE median | 0.597 | 0.389 |
+| BASE average | 0.752 | 0.669 |
 
 The mechanism: **OHLCV candles disappear when nobody TRADES, but the AMM pool
 still holds reserves and still quotes.** A silent token is illiquid, not
@@ -350,3 +349,40 @@ Named so they are not mistaken for handled:
   circuit breaker.
 - **Regime change.** IID and block bootstrap both assume the future draws from
   the same distribution.
+
+
+---
+
+## Correction (2026-07-26, later): rugged positions were hidden
+
+The first version of this section claimed "zero rugs, zero quote failures in 19
+closed positions" and set `rug_pct` to 5% on that basis. That was measured on a
+censored sample and was wrong.
+
+Rugged positions are stored with **`status='void'`, not `'closed'`**, and are
+excluded from the dashboard's PnL by design. `live_calibrate.py` queried
+`WHERE status='closed'`, so every total loss was invisible to it. In fact
+**HAPPYCAT rugged both the BASE and HOLDER books** - `sol_received=0`,
+`exit_reason='rug_void'`, **21 consecutive failed sell quotes each**. The other
+workstream had already shipped `void_after_quote_failures` and
+`min_lp_locked_pct` in response to it.
+
+Corrected live record, counting voids:
+
+| book | n | WR | avg | median | under 0.10 |
+|---|---|---|---|---|---|
+| BASE | 14 | 14.3% | 0.752 | 0.597 | **7.1%** |
+| HOLDER | 6 | 33.3% | 0.838 | 0.449 | **16.7%** |
+
+Two rugs in twenty positions, so `rug_pct` is now **10%**. `live_calibrate.py`
+counts `status IN ('closed','void')` and flagged the stale default itself, which
+is the one thing in this document that worked exactly as intended.
+
+Monte Carlo on the re-corrected pool: avg 0.903x, EV **-9.7%**/trade, Sharpe
+-0.06, median final **1.51 SOL** from 5.00, P(loss) **76.6%**, `no_top` still
+100%. Directionally unchanged - the strategy was already negative - but the
+downside is real rather than assumed.
+
+**The general lesson: any query that scores live performance must include
+`void`.** Scoring only closed positions hides exactly the losses that matter
+most, and it will do so again for anything built on top of these books.

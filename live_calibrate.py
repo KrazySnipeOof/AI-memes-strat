@@ -39,9 +39,14 @@ def live_record(db_path: str) -> dict | None:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
+        # 'void' too, NOT just 'closed'. The runner voids a position after
+        # void_after_quote_failures consecutive failed sell quotes - a rug, the
+        # capital is gone - and excludes it from the dashboard's PnL. Excluding
+        # them here would hide every total loss from the calibration and drive
+        # rug_pct to zero, which is exactly the error this file exists to catch.
         rows = conn.execute(
             "SELECT sol_spent, sol_received, exit_reason FROM positions "
-            "WHERE status='closed' AND sol_spent > 0").fetchall()
+            "WHERE status IN ('closed','void') AND sol_spent > 0").fetchall()
     except sqlite3.OperationalError:
         return None
     finally:
@@ -127,9 +132,10 @@ def main() -> None:
 
     trials = [("coverage=last (pre-fix)", "last", {}),
               ("coverage=loss", "loss", {})]
-    for ds in (0, 15, 30, 45, 60, 75):
-        trials.append((f"coverage=stop, dark slip {ds}%", "stop",
-                       {"rug_pct": bt.CENSOR_MODEL["rug_pct"], "dark_slip_pct": float(ds)}))
+    for ds in (30, 45, 60):
+        for rp in (5.0, 10.0):
+            trials.append((f"coverage=stop, dark {ds}%, rug {rp:.0f}%", "stop",
+                           {"rug_pct": rp, "dark_slip_pct": float(ds)}))
 
     results, best = [], None
     for label, cov, censor in trials:
@@ -147,7 +153,8 @@ def main() -> None:
               f"{m['zeros_pct']:6.1f}% {r:9.3f}{star}")
 
     best = min(results, key=lambda r: r["residual"])
-    shipped = f"coverage=stop, dark slip {int(bt.CENSOR_MODEL['dark_slip_pct'])}%"
+    shipped = (f"coverage=stop, dark {int(bt.CENSOR_MODEL['dark_slip_pct'])}%, "
+               f"rug {bt.CENSOR_MODEL['rug_pct']:.0f}%")
     print(f"\n  best fit : {best['setting']}  (residual {best['residual']:.3f})")
     print(f"  shipped  : {shipped}")
     print("  -> defaults match the live record"

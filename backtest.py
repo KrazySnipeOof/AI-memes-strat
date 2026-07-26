@@ -420,20 +420,27 @@ COVERAGE_POLICIES = ("stop", "loss", "drop", "last")
 DEFAULT_COVERAGE = "stop"
 
 # What fraction of censored positions are genuine rugs - liquidity pulled, no
-# quote at any price, a real 0.0 - rather than merely illiquid. The live record
-# is 0/19, but 19 trades behind rugcheck + a round-trip slippage gate cannot
-# justify 0%, so this stays deliberately non-zero. Assignment is a deterministic
-# hash of the token's own timestamps: reproducible across runs, and it preserves
-# the variance a flat expected-value haircut would flatten out.
+# quote at any price, a real 0.0 - rather than merely illiquid. Observed live:
+# 2 in 20 positions, hence 10%. HAPPYCAT took out both the BASE and HOLDER
+# books at 21 consecutive failed sell quotes each.
+#
+# Rugged positions are stored with status='void', NOT 'closed', and the
+# dashboard excludes them from PnL. Query only 'closed' and every total loss
+# vanishes - which is exactly how an earlier pass here concluded "zero rugs in
+# 19 trades" and set this to 5%. Any query that scores live performance must
+# include 'void'.
+#
+# Assignment is a deterministic hash of the token's own timestamps: reproducible
+# across runs, and it preserves the variance a flat expected-value haircut would
+# flatten out.
 #
 # `dark_slip_pct` is the extra haircut for exiting a pool that has stopped
-# trading. It CANNOT be calibrated from the paper record - live has had zero
-# dark exits (every one of 19 positions exited normally), so there is no
-# observation to fit. It is therefore an explicit, stated assumption and the
-# single largest source of uncertainty in the model: sweeping it across a
-# plausible range moves BASE's average by ~0.3x. Resolving it needs real dark
-# exits observed in paper trading, not more backtesting.
-CENSOR_MODEL = {"rug_pct": 5.0, "dark_slip_pct": 45.0}
+# trading but has NOT rugged. It cannot be measured from the paper record - no
+# live position has yet exited that way - so it is an explicit assumption and
+# the largest remaining source of uncertainty: sweeping it across a plausible
+# range moves BASE's average by ~0.3x. 45% is where the model's median matches
+# the live median. Resolving it needs real dark exits, not more backtesting.
+CENSOR_MODEL = {"rug_pct": 10.0, "dark_slip_pct": 45.0}
 # 45% is where the model's median trade matches the live median exactly (0.599)
 # while keeping near-zero total losses, as observed. That is a fit to 13 closed
 # BASE trades - weak evidence, and it should be re-checked as the record grows.

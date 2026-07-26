@@ -375,8 +375,9 @@ def main() -> None:
     for key, _, _ in scenarios:
         rk = results[key]["risk"]
         print(f"{key:<10} {rk['ev_pct']:>+8.1f}% {rk['sharpe']:>7.2f} {rk['sortino']:>8.2f}")
-    print("\nCAVEATS: resamples BACKTEST multiples (simulated fills, majority data_end")
-    print(f"exits, {len(pool)}-trade sample). IID/block assume the future draws from the same")
+    print("\nCAVEATS: resamples BACKTEST multiples (simulated fills; censored exits resolved")
+    print(f"by the engine's coverage policy, NOT marked at last price; {len(pool)}-trade")
+    print("sample). IID/block assume the future draws from the same")
     print("distribution - regime change is NOT modeled. Daily loss limit not modeled.")
     print("Paper trading remains the arbiter of real edge.")
 
@@ -551,8 +552,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <div class="card">
     <h2>Assumptions &amp; caveats</h2>
     <ul class="caveats">
-      <li><b>How to read this page:</b> every scenario ends profitable in ~all paths — meaning sequencing/path risk is negligible <i>under this trade distribution</i>. The entire remaining risk is <b>distributional</b>: whether live trades actually draw from anything like the backtest distribution. That question is answered by paper trading, not by this simulation.</li>
-      <li>Trade pool = <b>backtest</b> multiples (simulated fills, 4% round-trip cost, conservative candle-ambiguity rule). The majority of exits are <code>data_end</code> (12h candle windows) — an inherent optimism disclosed in the backtest telemetry.</li>
+      <li><b>How to read this page:</b> the trade pool is <b>negative-expectancy</b>, so most paths end below the starting bankroll. Sequencing is not the interesting risk here — the distribution itself is losing. Read the scenario table as "how bad, how often", not as a survival question.</li>
+      <li>Trade pool = <b>backtest</b> multiples (simulated fills, 4% round-trip cost, conservative candle-ambiguity rule). Positions whose candles run out before <code>max_hold</code> are <b>censored</b>, not completed: they are resolved by the engine's <code>coverage</code> policy (default <code>stop</code> — the bot's own stop/time exit firing against a pool nobody else is trading; rugs book 0). They are <b>never</b> marked at the last traded price. That older behaviour inflated this report to 84.8% WR / 1.607x, because the exit rules guarantee the censored subset is the still-winning one.</li>
       <li>Bootstrap assumes future trades draw from the same distribution as the %%POOLN%%-trade sample. <b>Regime change is not modeled</b> — the block and no-top scenarios are partial stress tests, not a substitute.</li>
       <li>Fixed-stake sizing mirrors <code>config.asym.json</code> (0.25 SOL/trade). The bot's daily loss limit (0.75 SOL) is <b>not</b> modeled; it would truncate the worst same-day sequences.</li>
       <li>Paper trading remains the arbiter of real edge (locked project rule). This page quantifies path risk <i>if</i> the backtest distribution holds — it is not evidence that it will.</li>
