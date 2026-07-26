@@ -19,6 +19,7 @@ Usage: python backtest.py [--max-tokens 60] [--entry-age 20] [--cost-pct 4]
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import statistics
@@ -384,7 +385,7 @@ def entry_setup_ok(pre: list, entry_ts: int, entry: float, setup: dict) -> bool:
 FILL_MODEL = {
     "use_candle_low": True,   # False pins low_weight to 0 (fill at trigger)
     "low_weight": 0.7,        # how far toward the candle low the fill lands
-    "stop_slip_pct": 3.0,     # extra haircut on stop fills
+    "stop_slip_pct": 5.0,     # extra haircut on stop fills (live median: -4.9%)
     "trail_slip_pct": 5.0,    # extra haircut on trailing-stop fills
 }
 
@@ -409,13 +410,49 @@ def fill_at(trigger: float, low: float, fill: dict) -> float:
 #   drop - exclude the trade from the sample. Honest about not knowing, but
 #          biased toward tokens the data provider kept covering (survivors).
 #   last - the old behaviour, retained only so the bias can be measured.
-COVERAGE_POLICIES = ("loss", "drop", "last")
-DEFAULT_COVERAGE = "loss"
+#   stop - the bot keeps polling a live AMM quote after the candles stop, so its
+#          stop-loss / time-exit still fires. Candles vanish when nobody TRADES;
+#          the pool still holds reserves and still quotes. Calibrated against
+#          the paper trial: 19 closed positions, ZERO quote failures, worst
+#          outcome 0.375, nothing under 0.10 - against which "loss" (63% of
+#          trades to 0.0) is plainly too harsh and "last" too generous.
+COVERAGE_POLICIES = ("stop", "loss", "drop", "last")
+DEFAULT_COVERAGE = "stop"
+
+# What fraction of censored positions are genuine rugs - liquidity pulled, no
+# quote at any price, a real 0.0 - rather than merely illiquid. The live record
+# is 0/19, but 19 trades behind rugcheck + a round-trip slippage gate cannot
+# justify 0%, so this stays deliberately non-zero. Assignment is a deterministic
+# hash of the token's own timestamps: reproducible across runs, and it preserves
+# the variance a flat expected-value haircut would flatten out.
+#
+# `dark_slip_pct` is the extra haircut for exiting a pool that has stopped
+# trading. It CANNOT be calibrated from the paper record - live has had zero
+# dark exits (every one of 19 positions exited normally), so there is no
+# observation to fit. It is therefore an explicit, stated assumption and the
+# single largest source of uncertainty in the model: sweeping it across a
+# plausible range moves BASE's average by ~0.3x. Resolving it needs real dark
+# exits observed in paper trading, not more backtesting.
+CENSOR_MODEL = {"rug_pct": 5.0, "dark_slip_pct": 45.0}
+# 45% is where the model's median trade matches the live median exactly (0.599)
+# while keeping near-zero total losses, as observed. That is a fit to 13 closed
+# BASE trades - weak evidence, and it should be re-checked as the record grows.
+# live_calibrate.py re-runs the comparison; the sensitivity is roughly 0.03x of
+# average per 10 points of dark slip.
+
+
+def _is_rug(created_ts: int, entry_ts: float, rug_pct: float) -> bool:
+    """Stable per-token draw - no RNG, so a rerun reproduces the same book."""
+    if rug_pct <= 0:
+        return False
+    h = hashlib.sha1(f"{int(created_ts)}:{int(entry_ts)}".encode()).hexdigest()
+    return (int(h[:8], 16) % 10000) < rug_pct * 100
 
 
 def simulate(candles: list, exits: dict, entry_age_min: float, cost_pct: float,
              min_entry_vol: float, setup: Optional[dict] = None,
-             fill: Optional[dict] = None, coverage: str = DEFAULT_COVERAGE) -> Optional[dict]:
+             fill: Optional[dict] = None, coverage: str = DEFAULT_COVERAGE,
+             censor: Optional[dict] = None) -> Optional[dict]:
     """Run the exit state machine over one token's candles.
 
     Conservative candle-ambiguity rule: stops/trailing are checked against the
@@ -431,6 +468,7 @@ def simulate(candles: list, exits: dict, entry_age_min: float, cost_pct: float,
     `censored=True` so callers can count what the policy absorbed.
     """
     fill = FILL_MODEL if fill is None else fill
+    censor = CENSOR_MODEL if censor is None else censor
     stop_slip = 1 - fill.get("stop_slip_pct", 0.0) / 100
     trail_slip = 1 - fill.get("trail_slip_pct", 0.0) / 100
     created = candles[0][0]
@@ -505,6 +543,20 @@ def simulate(candles: list, exits: dict, entry_age_min: float, cost_pct: float,
             cl_m = post[-1][4] / entry
             events.append({"ts": post[-1][0], "kind": "END", "portion": remaining, "mult": cl_m})
             received += remaining * cl_m
+        elif coverage == "stop":
+            # the bot is still polling a live quote: its stop/time-exit fires
+            # against the pool even though nobody else is trading
+            if _is_rug(candles[0][0], entry_ts, censor.get("rug_pct", 0.0)):
+                events.append({"ts": post[-1][0], "kind": "RUG", "portion": remaining, "mult": 0.0})
+                reason = "rugged"
+            else:
+                cl_m = post[-1][4] / entry
+                got = (min(cl_m, stop_mult) * stop_slip
+                       * (1 - censor.get("dark_slip_pct", 0.0) / 100))
+                events.append({"ts": post[-1][0], "kind": "DARK-STOP",
+                               "portion": remaining, "mult": got})
+                received += remaining * got
+                reason = "dark_stop"
         else:  # "loss" - the token stopped trading; the remainder is unsellable
             events.append({"ts": post[-1][0], "kind": "DEAD", "portion": remaining, "mult": 0.0})
             reason = "no_coverage"
@@ -579,6 +631,13 @@ def main() -> None:
                     help="extra haircut %% on stop fills (default %(default)s)")
     ap.add_argument("--trail-slip", type=float, default=FILL_MODEL["trail_slip_pct"],
                     help="extra haircut %% on trailing-stop fills (default %(default)s)")
+    ap.add_argument("--dark-slip", type=float, default=CENSOR_MODEL["dark_slip_pct"],
+                    help="extra %% haircut exiting a pool that stopped trading, under "
+                         "--coverage stop. UNCALIBRATED - live has had no dark exits "
+                         "(default %(default)s)")
+    ap.add_argument("--rug-pct", type=float, default=CENSOR_MODEL["rug_pct"],
+                    help="%% of censored positions treated as real rugs (0.0) under "
+                         "--coverage stop; the rest exit at the stop (default %(default)s)")
     ap.add_argument("--low-weight", type=float, default=FILL_MODEL["low_weight"],
                     help="how far from trigger toward the candle low stops/trails fill: "
                          "0=trigger (optimistic), 1=candle low (pessimistic) (default %(default)s)")
@@ -588,6 +647,7 @@ def main() -> None:
     args = ap.parse_args()
     fill = {"use_candle_low": not args.fill_at_trigger, "low_weight": args.low_weight,
             "stop_slip_pct": args.stop_slip, "trail_slip_pct": args.trail_slip}
+    censor = {"rug_pct": args.rug_pct, "dark_slip_pct": args.dark_slip}
 
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
     cfg = Config.load(args.config)
@@ -652,6 +712,8 @@ def main() -> None:
     if setup and setup.get("peak_window_min"):
         print(f"  peak/nuke lookback bounded to {setup['peak_window_min']}m (age-invariant gate)")
     print(f"coverage policy: {args.coverage}"
+          + (f" (rug {args.rug_pct:.1f}%, dark slip {args.dark_slip:.1f}%)"
+             if args.coverage == "stop" else "")
           + ("  [WARNING: 'last' is the pre-fix behaviour and inflates results]"
              if args.coverage == "last" else ""))
     print(f"fill model: stops/trails {(str(int(100 * fill['low_weight'])) + '% toward candle low') if fill['use_candle_low'] else 'at trigger'}"
@@ -683,7 +745,7 @@ def main() -> None:
         entered = False
         for name, exits in variants:
             sim = simulate(candles, exits, args.entry_age, args.cost_pct, args.min_entry_vol,
-                           setup=setup, fill=fill, coverage=args.coverage)
+                           setup=setup, fill=fill, coverage=args.coverage, censor=censor)
             if sim:
                 entered = True
                 censored[name] += bool(sim.get("censored"))
@@ -720,7 +782,8 @@ def main() -> None:
                    "cost_pct": args.cost_pct, "cohorts": counts,
                    "tokens_processed": len(tokens) - skipped, "no_history": skipped,
                    "setup_filter": setup,
-                   "coverage_policy": args.coverage, "fill_model": fill},
+                   "coverage_policy": args.coverage, "fill_model": fill,
+                   "censor_model": censor},
         "variants": [],
     }
     for name, exits in variants:

@@ -237,3 +237,116 @@ the 0.582 ungated baseline. **These are real discriminators - they sort good
 tokens from bad. They just do not sort hard enough to cover the death rate and
 the cost of getting out.** That is a materially different finding from "the
 signal was noise", and it is the part worth building on.
+
+
+---
+
+# Why the models still flattered the strategies (2026-07-26)
+
+Two separate problems, and it matters which is which.
+
+## 1. The fixes are not deployed
+
+The dashboard reads `reports/` from the **primary checkout**, which still runs
+the pre-fix engine. On 2026-07-26 it had regenerated `mc_trades.json` at
+**avg 1.607x, hold 480m** - the original inflated pool - and `strategy_lab.json`
+still held BOUNCE 1.135x / H1 1.028x. Everything in this document lives on the
+PR branch. **Until it merges and the runners restart, the panel is showing the
+numbers this work disproved.**
+
+## 2. `coverage=loss` over-corrected
+
+Against the paper record the harsh censoring model was as wrong as the thing it
+replaced, in the other direction:
+
+| | live paper (19 closed) | `coverage=loss` |
+|---|---|---|
+| trades ending under 0.10 | **0 of 19** | **33%** |
+| worst single outcome | 0.375 | 0.000 |
+| quote failures | **0** | n/a |
+| BASE median | 0.599 | 0.389 |
+
+The mechanism: **OHLCV candles disappear when nobody TRADES, but the AMM pool
+still holds reserves and still quotes.** A silent token is illiquid, not
+unsellable - the bot keeps polling Jupiter and its stop or 3h time-exit still
+fires. Treating every dark position as a total loss assumed a rug every time.
+Live has had zero rugs and zero failed exits in 19 positions.
+
+Testing the obvious alternative first: applying the live liquidity gates to the
+backtest universe does **not** explain it. Sorting entries by pre-entry volume,
+the death rate *rises* with volume (69.6% above $75k cumulative vs 13.3% at
+$8k-15k) - heavy early volume is a launch frenzy that dies, not a sign of
+health. The gates would not have removed the deaths.
+
+### `coverage=stop`, the new default
+
+A censored position exits at `min(last close, stop) x fill slippage x
+(1 - dark_slip)`, with `rug_pct` of them taken to 0.0 as genuine rugs by a
+deterministic per-token hash (reproducible, and it keeps the variance a flat
+expected-value haircut would flatten).
+
+Two calibrations, of very different quality:
+
+- `stop_slip_pct` 3% -> **5%**, from the measured live stop fills: nine
+  stop-outs, median **-4.9%** against trigger.
+- `dark_slip_pct` = **45%**. This one **cannot** be measured - live has had no
+  dark exits at all - so it is fitted, and 45% is where the model's median trade
+  matches the live median exactly. That is a fit to 13 BASE trades. It is the
+  largest remaining assumption in the engine, worth ~0.03x of average per 10
+  points, and it should be re-checked as the record grows.
+
+## Model vs live, after calibration
+
+Scored against the live config that actually produced those 13 trades
+(`config.asym.json` at hold 480m), on `bd_tokens.json`:
+
+| | WR | avg | median | trades <0.10 |
+|---|---|---|---|---|
+| **live BASE (n=13)** | **15.4%** | **0.810** | **0.599** | **0.0%** |
+| coverage=last (pre-fix) | 81.2% | 1.563 | 1.236 | 0.0% |
+| coverage=loss | 16.9% | 0.669 | 0.389 | 32.8% |
+| **coverage=stop, dark 45% (shipped)** | **16.9%** | **0.848** | **0.599** | **1.0%** |
+
+The pre-fix engine missed the win rate by 66 points. The calibrated engine is
+within 1.5 points on win rate, 0.04x on average, and exact on median.
+
+## Monte Carlo on the calibrated pool
+
+| | pre-fix | `loss` (too harsh) | **calibrated** |
+|---|---|---|---|
+| pool avg | 1.607x | 0.752x | **0.907x** |
+| EV / trade | positive | -24.8% | **-9.3%** |
+| Sharpe | positive | -0.15 | **-0.06** |
+| edge margin | +36% | -33% | **-10%** |
+| median final (5 SOL, IID) | grows | 0.00 SOL | **1.67 SOL** |
+| P(loss) | low | 93.4% | **75.7%** |
+
+Still negative expectancy - but a slow bleed with a wide spread, not instant
+ruin, which is what the paper record actually looks like (BASE 1.00 -> 0.381 SOL
+over 13 trades). `no_top` remains 100% loss: strip the top 5% of winners and
+there is nothing left, the same tail-dependence that has failed live twice now.
+
+## Keeping it honest: `live_calibrate.py`
+
+The fix for "the model flatters the strategy" is not a better guess, it is a
+standing check. `python live_calibrate.py` scores every candidate engine setting
+against the closed paper books and prints the residual, scored on **median and
+total-loss rate** rather than the mean - with a sample this small the mean is
+whichever tail turned up. It ends by saying whether the shipped defaults are
+still the best fit, or `DEFAULTS ARE STALE`. Re-run it as the record grows.
+
+## Still unmodelled
+
+Named so they are not mistaken for handled:
+
+- **Slot contention.** The backtest evaluates every token independently; live
+  runs 3 slots and one entry per cycle, so it takes a first-come subset, not a
+  random sample. Direction unknown.
+- **Discovery latency.** The backtest enters at exactly 30m; live enters when it
+  notices.
+- **Downtime.** 24.5% dark in the trial. Positions run unmanaged past their
+  exits.
+- **The daily loss limit** (0.75 SOL) truncates bad days; the MC has no such
+  circuit breaker.
+- **Regime change.** IID and block bootstrap both assume the future draws from
+  the same distribution.
