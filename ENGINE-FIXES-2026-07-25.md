@@ -55,8 +55,11 @@ and was fixed to match, or its tiles would disagree with the gate's own verdict.
 Stops and trailing stops filled at *exactly* their trigger level no matter how
 far the candle low sat below. Measured against the live trial, trailing stops
 filled **15-27% below trigger** (RDLN -27.1%, sharkdog -22.6%, RAKO -15.0%) and
-stops 1-21% below. `FILL_MODEL` now fills at `min(trigger, candle low)` plus a
-slip haircut (3% stops, 5% trails). `--fill-at-trigger` restores the old model.
+stops 1-21% below. `FILL_MODEL` now places the fill `low_weight` of the way
+from the trigger toward the candle low (default 0.7) plus a slip haircut (3%
+stops, 5% trails). `--low-weight 0` / `--fill-at-trigger` restores the old model.
+See the fill-sensitivity table under the fresh lab - this dial matters more than
+anything else in the engine.
 
 ### P3 - entry age < 2h, hold < 3h (all three configs)
 
@@ -110,10 +113,10 @@ $8k, cost 4%):
 |---|---|---|---|---|---|
 | OLD engine + OLD ladder (8h) — *the 1.6x number* | 310 | 84.8% | **1.607** | 1.291 | 74.5% |
 | NEW engine + OLD ladder (8h) | 314 | 15.9% | 0.657 | 0.389 | 74.2% |
-| **NEW engine + NEW ladder (3h) — shipped** | 314 | **25.5%** | **0.741** | 0.389 | **63.1%** |
+| **NEW engine + NEW ladder (3h) — shipped** | 314 | **26.4%** | **0.752** | 0.389 | **63.1%** |
 
-The 3h cap cuts censoring 74.2% -> 63.1% and lifts WR 15.9% -> 25.5%, but the
-average only moves 0.657 -> 0.741. **BASE is negative-expectancy on the full
+The 3h cap cuts censoring 74.2% -> 63.1% and lifts WR 15.9% -> 26.4%, but the
+average only moves 0.657 -> 0.752. **BASE is negative-expectancy on the full
 sample, and the remake does not fix that** - it makes a bad strategy less bad.
 
 Entry-age sensitivity holds across 30-120m, so the `max_age_min: 120` ceiling is
@@ -125,39 +128,40 @@ continuity) were swept and did not discriminate.
 
 An earlier pass on `bd_tokens_fresh.json` (n=65) read the remade ladder at
 **1.47x / 26% WR** and it was reported as clearing breakeven. The full sample
-(n=314, 5x larger, longer window) reads **0.741x** for the identical ladder. The
+(n=314, 5x larger, longer window) reads **0.752x** for the identical ladder. The
 fresh number was carried by a few 20x hard-take-profits that dilute at scale -
-the larger sample has only 4 of them in 314 trades. **Treat 0.741x as the
+the larger sample has only 4 of them in 314 trades. **Treat 0.752x as the
 number.** Both samples were checked for fetch-truncation and neither shows it
 (biggest single end-hour holds 1.6% and 6.2% of tokens respectively), so the
 gap is sample size and window, not a data artifact.
 
-The fresh-OOT lab still ranks **BOUNCE (1.135x @ 57.4% WR, n=54)** and
-**H1/HOLDER (1.028x @ 60.7%, n=28)** above BASE, and both win by being right
-often rather than by hitting a rare 20x. Nothing here changes that ordering.
+BOUNCE and H1 still rank above BASE on the fresh sample, but **not** at the
+published 1.135x / 1.028x - those were computed with the same optimistic fill.
+Corrected, they read 0.808x and 0.832x, i.e. also below breakeven. See the fresh
+lab section below.
 
 ## Monte Carlo, re-run on the corrected pool
 
 `python montecarlo.py --refresh-trades` regenerated the pool through the fixed
-`simulate()` (314 trades, WR 25.5%, avg 0.741, median 0.389; exit mix
+`simulate()` (314 trades, WR 26.4%, avg 0.752, median 0.389; exit mix
 `no_coverage=198, time_stop=65, trailing_stop=38, stop_loss=9, hard_tp=4`).
 
 | | pre-fix | corrected |
 |---|---|---|
-| pool avg | 1.607x | **0.741x** |
-| EV per trade | positive | **-25.9% of stake** |
-| Sharpe / Sortino | positive | **-0.16 / -0.38** |
-| edge margin | +36% extra cost tolerated | **-35% — the edge is already gone** |
+| pool avg | 1.607x | **0.752x** |
+| EV per trade | positive | **-24.8% of stake** |
+| Sharpe / Sortino | positive | **-0.15 / -0.37** |
+| edge margin | +36% extra cost tolerated | **-33% — the edge is already gone** |
 
 10,000 paths x 100 trades, 0.25 SOL stake from 5.00 SOL:
 
 | scenario | median final | P(loss) | P(DD>=50%) |
 |---|---|---|---|
-| iid | **0.00 SOL** | 94.1% | 97.5% |
-| block10 | 0.00 SOL | 95.9% | 98.2% |
-| stress (+5% cost) | 0.00 SOL | 96.2% | 98.6% |
+| iid | **0.00 SOL** | 93.4% | 97.3% |
+| block10 | 0.00 SOL | 95.4% | 97.9% |
+| stress (+5% cost) | 0.00 SOL | 95.7% | 98.4% |
 | no_top (top 5% removed) | 0.00 SOL | **100.0%** | 100.0% |
-| frac5 (5% of equity) | 0.97 SOL | 98.1% | 99.3% |
+| frac5 (5% of equity) | 1.03 SOL | 97.8% | 99.2% |
 
 **The prior Monte Carlo conclusion does not survive.** It previously read "path
 risk negligible, all risk is distributional, 36% edge margin" - computed on a
