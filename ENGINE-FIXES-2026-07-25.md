@@ -169,3 +169,67 @@ bleed. `no_top` at 100% loss is the same tail-dependence that failed live.
 Validating any remake needs a **freshly fetched window** with a pre-registered
 eval - `reports/bd_tokens_fresh.json` has now been used for selection and can no
 longer serve as its own out-of-sample.
+
+## Fresh lab, re-run: nothing clears 1.0
+
+`freshlab.py` never used `backtest.simulate()` - it imports `sim` from
+`loop8_eval`, a second exit machine. It therefore did **not** inherit P0/P2
+automatically. Two things were already right there and one was not:
+
+- **P0 was already handled**: `sim()` credits the un-exited remainder at 0.0
+  unless `intact_end` says the pool still has liquidity, and freshlab passes
+  `intact_end=False`. That is why freshlab read BASE at 0.226x while
+  `backtest.py` read 1.605x on the same strategy. The lab was the honest one.
+- **P1 came for free**: freshlab calls `backtest.entry_setup_ok`, so the bounded
+  lookback applies with no change.
+- **P2 was missing**: `sim()` filled stops and trails at exactly their trigger
+  level. Now fixed, sharing `backtest.fill_at`.
+
+`--pre-fix` reproduces the published numbers exactly (BASE-EA 0.226, BOUNCE
+1.135, H1-EA 1.028), which is the control that says the harness is sound.
+
+| family | published (pre-fix) | corrected + 3h hold |
+|---|---|---|
+| BASE-EA | 0.226x @ 6% | **0.508x @ 20%** |
+| **BOUNCE** | **1.135x @ 57%** | **0.808x @ 46%** |
+| **H1-EA** (holder distributed) | **1.028x @ 61%** | **0.832x @ 50%** |
+| H2-EA (holder loose) | 0.850x @ 54% | 0.720x @ 44% |
+| H0-EA (no gate) | 0.599x @ 36% | 0.582x @ 30% |
+| H3-EA (concentrated, inverse ctl) | 0.487x @ 27% | 0.527x @ 24% |
+| V3 (churn) | 0.789x @ 37% | 0.828x @ 34% |
+| V1 / V2 / V4 | 0.70-0.72x | 0.73-0.74x |
+
+**Neither BOUNCE nor H1 survives. Not one family clears 1.0.** The two that
+justified reallocating away from BASE were carried by the same optimistic
+stop/trail fill that flattered BASE.
+
+### How much of this is the fill assumption?
+
+BOUNCE does not use the entry gate, so its whole move is P2. Decomposed
+(n=54 throughout):
+
+| fill assumption | BOUNCE avg | WR |
+|---|---|---|
+| at trigger, no slip (pre-fix, optimistic bound) | 1.135 | 57.4% |
+| slip only (3%/5%), still at trigger | 1.080 | 57.4% |
+| **70% toward the candle low + slip (shipped)** | **0.808** | **46.3%** |
+| 100% at the candle low, no slip (pessimistic bound) | 0.728 | 40.7% |
+
+The slip percentages are almost irrelevant; **where the fill lands between the
+trigger and the candle low is everything.** Neither bound is the truth, which is
+why `low_weight` is now an explicit dial rather than a hidden assumption. The
+default 0.7 leans pessimistic because the only live fill data available - the
+BASE trial's three trailing stops, which came in 15%, 23% and 27% under trigger -
+sits near that end. If real fills are better than that, BOUNCE's honest number
+rises toward 1.08; it does not reach the published 1.135 under any setting that
+includes slippage.
+
+### What does survive
+
+The holder signal still **ranks** correctly under the corrected engine:
+H1 0.832 > H2 0.720 > H0 0.582 > H3 0.527, monotone, with the deliberately
+inverted control (H3, concentrated holders) worst. Same for BOUNCE at 0.808 vs
+the 0.582 ungated baseline. **These are real discriminators - they sort good
+tokens from bad. They just do not sort hard enough to cover the death rate and
+the cost of getting out.** That is a materially different finding from "the
+signal was noise", and it is the part worth building on.

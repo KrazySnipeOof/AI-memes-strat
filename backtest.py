@@ -373,11 +373,28 @@ def entry_setup_ok(pre: list, entry_ts: int, entry: float, setup: dict) -> bool:
 # BELOW their trigger (RDLN -27.1%, sharkdog -22.6%, RAKO -15.0%) and stops
 # 1-21% below. use_candle_low captures the gap-through, the slip percentages
 # then cover AMM price impact on the way out.
+#
+# `low_weight` places the fill between the trigger and the candle low:
+#   0.0 = fill at the trigger (optimistic bound, the pre-fix behaviour)
+#   1.0 = fill at the candle low (pessimistic bound - worst tick, every time)
+# Neither bound is the truth. The only live fill data available - the BASE
+# trial's three trailing stops, which came in 15%, 23% and 27% under trigger -
+# sits nearer the pessimistic end, so the default leans that way without
+# assuming the worst tick on every exit.
 FILL_MODEL = {
-    "use_candle_low": True,   # fill at min(trigger, candle low), not at trigger
+    "use_candle_low": True,   # False pins low_weight to 0 (fill at trigger)
+    "low_weight": 0.7,        # how far toward the candle low the fill lands
     "stop_slip_pct": 3.0,     # extra haircut on stop fills
     "trail_slip_pct": 5.0,    # extra haircut on trailing-stop fills
 }
+
+
+def fill_at(trigger: float, low: float, fill: dict) -> float:
+    """Blend the trigger and the candle low per the fill model."""
+    if not fill.get("use_candle_low", True) or low >= trigger:
+        return trigger
+    w = fill.get("low_weight", 1.0)
+    return trigger + (low - trigger) * w
 
 # P0: what to do when a token's candle history ends before the position reaches
 # a real exit. The pre-fix engine marked the position closed at the last
@@ -414,7 +431,6 @@ def simulate(candles: list, exits: dict, entry_age_min: float, cost_pct: float,
     `censored=True` so callers can count what the policy absorbed.
     """
     fill = FILL_MODEL if fill is None else fill
-    use_low = fill.get("use_candle_low", True)
     stop_slip = 1 - fill.get("stop_slip_pct", 0.0) / 100
     trail_slip = 1 - fill.get("trail_slip_pct", 0.0) / 100
     created = candles[0][0]
@@ -444,14 +460,14 @@ def simulate(candles: list, exits: dict, entry_age_min: float, cost_pct: float,
         age = (ts - entry_ts) / 60
         lo_m, hi_m, cl_m = l / entry, h / entry, cl / entry
         if stage == 0 and lo_m <= stop_mult:
-            got = (min(stop_mult, lo_m) if use_low else stop_mult) * stop_slip
+            got = fill_at(stop_mult, lo_m, fill) * stop_slip
             events.append({"ts": ts, "kind": "STOP", "portion": remaining, "mult": got})
             received += remaining * got
             remaining, reason, end_ts = 0.0, "stop_loss", ts
             break
         if stage > 0 and lo_m <= peak * (1 - trail / 100):
             level = peak * (1 - trail / 100)
-            got = (min(level, lo_m) if use_low else level) * trail_slip
+            got = fill_at(level, lo_m, fill) * trail_slip
             events.append({"ts": ts, "kind": "TRAIL", "portion": remaining, "mult": got})
             received += remaining * got
             remaining, reason, end_ts = 0.0, "trailing_stop", ts
@@ -563,11 +579,14 @@ def main() -> None:
                     help="extra haircut %% on stop fills (default %(default)s)")
     ap.add_argument("--trail-slip", type=float, default=FILL_MODEL["trail_slip_pct"],
                     help="extra haircut %% on trailing-stop fills (default %(default)s)")
+    ap.add_argument("--low-weight", type=float, default=FILL_MODEL["low_weight"],
+                    help="how far from trigger toward the candle low stops/trails fill: "
+                         "0=trigger (optimistic), 1=candle low (pessimistic) (default %(default)s)")
     ap.add_argument("--fill-at-trigger", action="store_true",
                     help="pre-fix fill model: fill stops/trails at their trigger level even when "
                          "the candle gapped straight through it")
     args = ap.parse_args()
-    fill = {"use_candle_low": not args.fill_at_trigger,
+    fill = {"use_candle_low": not args.fill_at_trigger, "low_weight": args.low_weight,
             "stop_slip_pct": args.stop_slip, "trail_slip_pct": args.trail_slip}
 
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -635,7 +654,7 @@ def main() -> None:
     print(f"coverage policy: {args.coverage}"
           + ("  [WARNING: 'last' is the pre-fix behaviour and inflates results]"
              if args.coverage == "last" else ""))
-    print(f"fill model: stops/trails at {'min(trigger, candle low)' if fill['use_candle_low'] else 'trigger'}"
+    print(f"fill model: stops/trails {(str(int(100 * fill['low_weight'])) + '% toward candle low') if fill['use_candle_low'] else 'at trigger'}"
           f" · stop slip {fill['stop_slip_pct']:.1f}% · trail slip {fill['trail_slip_pct']:.1f}%")
 
     def gt_progress(phase: str, done: int, cached: int, no_data: int):
