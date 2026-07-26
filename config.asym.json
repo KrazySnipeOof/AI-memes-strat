@@ -18,7 +18,7 @@
     "min_liquidity_usd": 20000,
     "max_liquidity_usd": 2000000,
     "min_age_min": 30,
-    "max_age_min": 1440,
+    "max_age_min": 120,
     "max_fdv_to_liquidity": 60,
     "min_vol_m5_usd": 2000,
     "min_sells_m5": 3,
@@ -69,7 +69,7 @@
     ],
     "hard_tp_multiple": 20.0,
     "trailing_stop_pct": 30,
-    "max_hold_min": 480
+    "max_hold_min": 180
   },
   "risk": {
     "daily_loss_limit_sol": 0.75
