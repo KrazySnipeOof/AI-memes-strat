@@ -12,6 +12,22 @@ LAMPORTS_PER_SOL = 1_000_000_000
 SETUP_FAMILIES = {"base", "bounce"}
 
 
+def setup_families() -> set:
+    """Valid `websocket.setup_family` values, resolved at CALL time.
+
+    The 2026-07-27 search families live in strategies.py, which imports quest ->
+    backtest -> `from bot.config import Config`. Unioning them into
+    SETUP_FAMILIES at module import therefore deadlocks on a half-initialised
+    bot.config and silently yields an empty set - which then rejects every one
+    of those families at config load. Resolving on demand breaks the cycle:
+    by the time a Config is constructed, bot.config is fully initialised."""
+    try:
+        import strategies
+        return SETUP_FAMILIES | set(strategies.STRATEGIES)
+    except Exception:
+        return set(SETUP_FAMILIES)
+
+
 class Config:
     def __init__(self, raw: Dict[str, Any]):
         self.raw = raw
@@ -127,13 +143,14 @@ class Config:
         #   "bounce" the loop8 P3 bounce trigger (see birdeye_ws._bounce_gate)
         # "base" is the default, so existing configs are unchanged.
         self.ws_setup_family: str = str(w.get("setup_family") or "base").strip().lower()
-        if self.ws_setup_family not in SETUP_FAMILIES:
+        _fams = setup_families()
+        if self.ws_setup_family not in _fams:
             # Fail at load, not silently at the first candidate: an unknown
             # family that fell through to "base" would quietly trade the wrong
             # strategy for days before anyone noticed.
             raise ValueError(
                 f"websocket.setup_family {self.ws_setup_family!r} unknown; "
-                f"expected one of {sorted(SETUP_FAMILIES)}")
+                f"expected one of {sorted(_fams)}")
         b = w.get("bounce", {})
         self.bounce_drawdown: float = float(b.get("drawdown", 0.55))
         self.bounce_trigger_vol_usd: float = float(b.get("trigger_vol_usd", 500))

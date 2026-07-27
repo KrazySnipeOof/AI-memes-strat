@@ -36,6 +36,7 @@ from typing import List, Optional
 import websocket
 
 import backtest  # repo root (run.py sys.path) - the validated setup gate lives there
+import strategies  # the 2026-07-27 search families, shared with the backtest
 import bdusage
 
 from .config import Config
@@ -357,6 +358,13 @@ class BirdeyeFeed:
             return False, f"setup: cum vol ${cum_vol:,.0f} < ${self.cfg.ws_min_cum_vol_usd:,.0f}"
         if self.cfg.ws_setup_family == "bounce":
             return self._bounce_gate(pre, now)
+        # The 2026-07-27 search families. Same screen_ok() the backtest scored,
+        # so the live gate cannot drift from the validated definition.
+        if self.cfg.ws_setup_family in strategies.STRATEGIES:
+            fam = self.cfg.ws_setup_family
+            if not strategies.screen_ok(pre, now, price, fam):
+                return False, f"setup: {fam} screen failed"
+            return True, f"setup ok ({fam}, {len(pre)} candles, cum vol ${cum_vol:,.0f})"
         if not backtest.entry_setup_ok(pre, now, price, backtest.DEFAULT_SETUP):
             return False, "setup: base-entry pattern failed"
         return True, f"setup ok ({len(pre)} candles, cum vol ${cum_vol:,.0f})"
