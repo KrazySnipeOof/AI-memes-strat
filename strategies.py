@@ -67,6 +67,21 @@ STRATEGIES = {
     },
 }
 
+# How many pre-entry candles the screen needs. `backtest.simulate()` requires 3
+# (it needs a price and some history), and these strategies enter at 3 MINUTES
+# of token age - which on 1-minute candles is about 4 candles. The live
+# `setup_gate` floor of 8 candles is right for base/bounce, which were fitted at
+# 30m+ entry ages, but it silently rejects every candidate one of these families
+# could ever take: the first live run logged "reject SKHY setup: only 3 candles"
+# on every promotion. Keep the two floors separate rather than lowering one gate
+# for the other's benefit.
+MIN_PRE_CANDLES = 3
+
+
+def min_pre_candles(family: str, default: int = 8) -> int:
+    return MIN_PRE_CANDLES if family in STRATEGIES else default
+
+
 _OPS = {">=": lambda a, b: a >= b, "<": lambda a, b: a < b}
 
 

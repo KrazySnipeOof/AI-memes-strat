@@ -348,8 +348,9 @@ class BirdeyeFeed:
         if not rows or rows[0][0] > created + COVERAGE_SLACK_SEC:
             return False, "setup: no candle coverage from listing"
         pre = [r for r in rows if r[0] <= now]
-        if len(pre) < 8:
-            return False, f"setup: only {len(pre)} candles"
+        need = strategies.min_pre_candles(self.cfg.ws_setup_family)
+        if len(pre) < need:
+            return False, f"setup: only {len(pre)} candles (need {need})"
         price = pre[-1][4]
         if price <= 0:
             return False, "setup: bad last price"
