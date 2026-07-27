@@ -10,3 +10,7 @@ reports/
 .pages_deploy/
 web/node_modules/
 web/dist/
+
+# session additions
+.claude/
+.copytrade_cache/

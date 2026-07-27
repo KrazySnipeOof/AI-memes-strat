@@ -294,6 +294,24 @@ class BirdeyeFeed:
             return False, "setup: base-entry pattern failed"
         return True, f"setup ok ({len(pre)} candles, cum vol ${cum_vol:,.0f})"
 
+    def fresh_candles(self, cand, session, budget: list) -> list:
+        """Current candle rows for a candidate, backfilling if the WS store is
+        thin/stale (same path as setup_gate, minus the base-entry check). For
+        the local human/moonshot gates when the setup filter is off."""
+        now = int(time.time())
+        wl = self.watch.get(cand.mint)
+        created = wl["listed_ts"] if wl else None
+        if created is None and cand.age_min is not None:
+            created = now - int(cand.age_min * 60)
+        rows = self.candle_rows(cand.mint)
+        stale = bool(rows) and now - rows[-1][0] > COVERAGE_SLACK_SEC
+        need = (not rows or (created is not None and rows[0][0] > created + COVERAGE_SLACK_SEC) or stale)
+        if need and self.cfg.ws_backfill and budget[0] > 0 and created is not None:
+            budget[0] -= 1
+            self.backfill(session, cand.mint, created, now)
+            rows = self.candle_rows(cand.mint)
+        return [r for r in rows if r[0] <= now]
+
     # ------------------------------------------------------------- discovery
     def _bd_json(self, session, path: str, params: dict):
         bdusage.record(path)

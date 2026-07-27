@@ -21,8 +21,11 @@ sys.path.insert(0, ROOT)
 
 import bdusage
 import blcards
+import fundergraph
+import walletpage
 from backtest import BLOCKLIST_PATH, MANUAL_BLOCKLIST_PATH
 from bot import jupiter
+from bot import wallets as botwallets
 from bot.config import Config, LAMPORTS_PER_SOL
 from bot.portfolio import Portfolio
 from bot.util import iso_now, load_dotenv, make_session
@@ -153,6 +156,28 @@ def _read_json(path: str):
         return None
 
 
+WS_STATE_PATH = os.path.join("reports", "ws_state.json")
+_ws_candles_cache = {"mtime": 0.0, "by_mint": {}}
+
+
+def ws_candles(mint: str, limit: int = 60) -> list:
+    """Last `limit` 1m candles [[ts,o,h,l,c,v_usd],...] for a mint, from the
+    bot's WS snapshot. Zero Birdeye CU: the feed maintains the store; the
+    multi-MB file is re-parsed only when its mtime changes (~every 60s)."""
+    try:
+        mtime = os.path.getmtime(WS_STATE_PATH)
+    except OSError:
+        return []
+    if mtime != _ws_candles_cache["mtime"]:
+        snap = _read_json(WS_STATE_PATH) or {}
+        _ws_candles_cache["by_mint"] = snap.get("candles") or {}
+        _ws_candles_cache["mtime"] = mtime
+    rows = _ws_candles_cache["by_mint"].get(mint)
+    if not rows:
+        return []
+    return sorted(rows.values(), key=lambda r: r[0])[-limit:]
+
+
 _bl_lock = threading.Lock()
 
 
@@ -220,6 +245,49 @@ def mc_refresh_status() -> dict:
     return out
 
 
+_ct_lock = threading.Lock()
+_ct_state = {"proc": None, "started": 0.0}
+CT_LOG = os.path.join("reports", "copytrade_run.log")
+CT_PROGRESS = os.path.join("reports", "copytrade_progress.json")
+
+
+def ct_run_start() -> dict:
+    """Spawn `python copytrade_backtest.py` (one at a time). It rewrites
+    reports/copytrade_backtest.json + emits copytrade_progress.json for the
+    WALLETS-tab progress bar. OHLCV is cached, so re-runs are fast."""
+    with _ct_lock:
+        p = _ct_state["proc"]
+        if p is not None and p.poll() is None:
+            return {"ok": True, "already_running": True}
+        os.makedirs("reports", exist_ok=True)
+        logf = open(CT_LOG, "w", encoding="utf-8")
+        _ct_state["proc"] = subprocess.Popen(
+            [sys.executable, os.path.join(ROOT, "copytrade_backtest.py")],
+            cwd=ROOT, stdout=logf, stderr=subprocess.STDOUT)
+        _ct_state["started"] = time.time()
+        return {"ok": True, "already_running": False}
+
+
+def ct_progress() -> dict:
+    """Live progress for the copy-trade backtest. Merges the process liveness
+    with the progress file the script writes; 'stalled' if the file is old and
+    no process is tracked."""
+    prog = _read_json(CT_PROGRESS) or {"phase": "idle", "pct": 0, "status": "idle"}
+    p = _ct_state["proc"]
+    running = p is not None and p.poll() is None
+    age = time.time() - prog.get("updated", 0) if prog.get("updated") else None
+    if prog.get("status") == "done":
+        prog["state"] = "done"
+    elif running or (age is not None and age < 30):
+        prog["state"] = "running"
+    elif prog.get("phase") == "idle":
+        prog["state"] = "idle"
+    else:
+        prog["state"] = "stalled"
+    prog["age_sec"] = round(age) if age is not None else None
+    return prog
+
+
 def ops_progress():
     """Progress of long-running R&D jobs. Fetchers write progress files; sweeps
     are inferred from their result files' timestamps."""
@@ -260,26 +328,37 @@ def asym_backtest():
     return None
 
 
-def asym_state():
-    """State block for the prototype asym-runner strategy (config.asym.json):
-    exit doctrine, paper-trading stats from its own db (never mixed with the
-    main portfolio), and latest backtest metrics."""
-    if acfg is None:
-        return None
-    paper = None
-    if os.path.exists(acfg.db_path):  # Portfolio() would create the file; don't
-        adb = Portfolio(acfg.db_path, acfg.mode)
+# Live paper strategies. base is the main-tree asym trial; bounce/holder run
+# from the parallel worktree with --workdir=ROOT, so their dbs/logs land here.
+WORKTREE = os.path.join(ROOT, ".claude", "worktrees", "paper-bounce-holder")
+STRATEGIES = [
+    ("base", "BASE", os.path.join(ROOT, "config.asym.json")),
+    ("bounce", "BOUNCE", os.path.join(WORKTREE, "config.bounce.json")),
+    ("holder", "HOLDER", os.path.join(WORKTREE, "config.holder.json")),
+    ("homerun", "HOMERUN", os.path.join(ROOT, "config.homerun.json")),
+    ("sniper", "SNIPER", os.path.join(ROOT, "config.sniper.json")),
+    ("volanomaly", "VOL-ANOM", os.path.join(ROOT, "config.volanomaly.json")),
+    ("dip", "DIP", os.path.join(ROOT, "config.dip.json")),
+    ("grinder", "GRINDER", os.path.join(ROOT, "config.grinder.json")),
+]
+
+
+def _paper_for(scfg):
+    """(paper dict|None, running bool, recent-closes list) for one strategy,
+    read-only from its own paper db + log. Never creates the db file."""
+    paper, closed_recent = None, []
+    dbp = scfg.db_path
+    if os.path.exists(dbp):
+        adb = Portfolio(dbp, scfg.mode)
         closed = adb.closed_positions(limit=500)
         wins = [p for p in closed if p.sol_received > p.sol_spent]
         mults = [p.sol_received / p.sol_spent for p in closed if p.sol_spent]
-        open_rows = []
-        unreal_lamports, quotes_missing = 0, False
+        open_rows, unreal_lamports, quotes_missing = [], 0, False
         for pos in adb.open_positions():
             val = cache.value(pos.mint, pos.tokens_raw)
             missing = val is None
             mult = ((pos.sol_received + (val or 0)) / pos.sol_spent) if pos.sol_spent else 0.0
-            if missing:
-                # no live quote: hold the position at its remaining cost basis
+            if missing:  # no live quote: hold the position at its remaining cost basis
                 quotes_missing = True
                 val = max(0, pos.sol_spent - pos.sol_received)
             unreal_lamports += pos.sol_received + val - pos.sol_spent
@@ -289,10 +368,8 @@ def asym_state():
                 "multiple": None if missing else round(mult, 3),
                 "peak": round(pos.peak_multiple, 2), "stage": pos.tp_stage,
             })
-        # every paper order (entry/exit fill), newest first, for the PAPER
-        # TRIAL panel's order feed
         import sqlite3
-        oconn = sqlite3.connect(acfg.db_path)
+        oconn = sqlite3.connect(dbp)
         oconn.row_factory = sqlite3.Row
         try:
             frows = oconn.execute(
@@ -306,26 +383,102 @@ def asym_state():
         orders = [{"ts": r["ts"], "side": r["side"], "symbol": r["symbol"],
                    "sol": round(sol(r["sol_lamports"]), 4), "note": r["note"] or ""}
                   for r in frows]
-        start_sol = float(acfg.raw.get("paper_starting_balance_sol", 1.0))
+        # voided (rugged, unsellable) positions: kept in the ledger but excluded
+        # from PnL/win-rate/balance above. Tracked separately so the loss is
+        # visible without corrupting strategy stats.
+        voided = adb.voided_positions()
+        start_sol = float(scfg.raw.get("paper_starting_balance_sol", 1.0))
         realized = sum(p.sol_received - p.sol_spent for p in closed)
         paper = {
-            "open": len(adb.open_positions()),
-            "count": len(closed),
-            "wins": len(wins),
+            "open": len(open_rows), "count": len(closed), "wins": len(wins),
             "win_rate": round(100 * len(wins) / len(closed), 1) if closed else None,
             "avg_multiple": round(statistics.mean(mults), 2) if mults else None,
-            "total_pnl_sol": round(sol(realized), 4),
-            "start_sol": start_sol,
+            "total_pnl_sol": round(sol(realized), 4), "start_sol": start_sol,
             "balance_sol": round(start_sol + sol(realized + unreal_lamports), 4),
-            "balance_est": quotes_missing,
-            "open_rows": open_rows,
-            "orders": orders,
+            "balance_est": quotes_missing, "open_rows": open_rows, "orders": orders,
+            "voided": len(voided),
+            "voided_sol": round(sol(sum(p.sol_spent for p in voided)), 4),
+            "realized_today_sol": round(sol(adb.realized_today_lamports()), 4),
         }
+        closed_recent = [
+            {"closed_at": p.closed_at, "symbol": p.symbol,
+             "multiple": round(p.sol_received / p.sol_spent, 2) if p.sol_spent else 0,
+             "pnl_sol": round(sol(p.sol_received - p.sol_spent), 4),
+             "reason": p.exit_reason or "?"}
+            for p in closed[:12]]
+        # keep void trades in the log feed (0 PnL, VOID-tagged), newest first
+        closed_recent += [
+            {"closed_at": p.closed_at, "symbol": p.symbol, "multiple": 0,
+             "pnl_sol": 0.0, "reason": "VOID · " + (p.exit_reason or "rug"), "void": True}
+            for p in voided[:8]]
+        closed_recent.sort(key=lambda r: r.get("closed_at") or "", reverse=True)
+        closed_recent = closed_recent[:12]
     try:
-        idle = time.time() - os.path.getmtime(acfg.log_path)
-        running = idle < max(2 * acfg.scan_interval_sec, 120)
+        idle = time.time() - os.path.getmtime(scfg.log_path)
+        running = idle < max(2 * scfg.scan_interval_sec, 120)
     except OSError:
         running = False
+    return paper, running, closed_recent
+
+
+def strategy_states():
+    """Per-strategy live paper states (BASE/BOUNCE/HOLDER). Strategies whose
+    config file is absent are skipped, so the panel degrades gracefully."""
+    out = []
+    for key, label, cfgpath in STRATEGIES:
+        if not os.path.exists(cfgpath):
+            continue
+        try:
+            scfg = acfg if (key == "base" and acfg is not None) else Config.load(cfgpath)
+        except Exception:
+            continue
+        paper, running, recent = _paper_for(scfg)
+        for r in recent:
+            r["strategy"] = label
+        out.append({
+            "key": key, "label": label, "running": running,
+            "exits": {"stop_loss_pct": scfg.stop_loss_pct, "take_profits": scfg.take_profits,
+                      "trailing_stop_pct": scfg.trailing_stop_pct,
+                      "hard_tp_multiple": scfg.hard_tp_multiple, "max_hold_min": scfg.max_hold_min},
+            "paper": paper, "closed_recent": recent,
+        })
+    return out
+
+
+def fleet_totals(strategies):
+    """Fleet-wide roll-up across every strategy's own ledger.
+
+    The header tiles used to read the single Portfolio the server was launched
+    with (config.asym.json -> BASE), so they reported one book while claiming to
+    be the whole fleet - "0 unit(s) currently deployed" while HOLDER and GRINDER
+    each held a position. Summing here keeps each book counted exactly once.
+
+    Voids (rugged, unsellable) stay OUT of pnl/win-rate, same as per-strategy,
+    but are carried so the UI can show what the ledgers absorbed."""
+    books = [s["paper"] for s in strategies if s.get("paper")]
+    count = sum(b["count"] for b in books)
+    wins = sum(b["wins"] for b in books)
+    traded = [s for s in strategies if s.get("paper")
+              and (s["paper"]["count"] or s["paper"]["open"] or s["paper"]["voided"])]
+    return {
+        "count": count, "wins": wins,
+        "win_rate": round(100 * wins / count, 1) if count else None,
+        "total_pnl_sol": round(sum(b["total_pnl_sol"] for b in books), 4),
+        "realized_today_sol": round(sum(b["realized_today_sol"] for b in books), 4),
+        "open": sum(b["open"] for b in books),
+        "voided": sum(b["voided"] for b in books),
+        "voided_sol": round(sum(b["voided_sol"] for b in books), 4),
+        "books": len(books), "books_traded": len(traded),
+        "books_running": sum(1 for s in strategies if s.get("running")),
+    }
+
+
+def asym_state():
+    """State block for the base asym-runner strategy (config.asym.json):
+    exit doctrine, paper-trading stats from its own db, and backtest metrics."""
+    if acfg is None:
+        return None
+    paper, running, _ = _paper_for(acfg)
     return {
         "exits": {
             "stop_loss_pct": acfg.stop_loss_pct,
@@ -373,10 +526,20 @@ REJECT_RE = re.compile(r"^(\S+ \S+) \w+\s+memebot: reject (\S+)\s+(.+)$")
 def classify_reject(reason: str) -> str:
     """Bucket a reject log line into its gate. Anchors match the exact verdict
     strings each bot module emits (order matters: 'bundle-sniper wallets'
-    contains 'sniper wallets', so smart-money is tested before insiders)."""
+    contains 'sniper wallets', so smart-money is tested before insiders).
+    Substring (not prefix) tests, because a symbol containing whitespace
+    pushes part of itself into the reason group."""
     r = reason.lower()
-    if r.startswith("setup:"):
+    if "setup:" in r:
         return "setup"
+    if "bounce:" in r:
+        return "bounce"
+    if "non-human token" in r:
+        return "human"
+    if "moonshot" in r:
+        return "moonshot"
+    if r.startswith(("sniper:", "volume_anomaly:", "dip:")):
+        return "screen"
     if "rugcheck" in r:
         return "rugcheck"
     if "bundle-sniper" in r or "top-trader" in r or "top traders" in r or "wash-trade" in r:
@@ -389,21 +552,76 @@ def classify_reject(reason: str) -> str:
     return "other"
 
 
-def reject_counts(lines) -> dict:
-    out: dict = {}
-    recent = []
+def parse_rejects(lines, label: str) -> list:
+    """Reject events from one strategy's log tail, tagged with its label."""
+    evs = []
     for ln in lines:
         m = REJECT_RE.match(ln)
         if not m:
             continue
         ts, sym, reason = m.groups()
-        cat = classify_reject(reason)
-        b = out.setdefault(cat, {"n": 0})
+        evs.append({"ts": ts, "symbol": sym, "cat": classify_reject(reason),
+                    "reason": reason.strip(), "strategy": label})
+    return evs
+
+
+REJECT_TAIL_BYTES = 196608  # per-strategy log window; re-read on every 5s poll
+
+
+def reject_state() -> dict:
+    """Merged rejection feed across every live strategy, so the airlock shows
+    what all four bots are filtering rather than only the config this server
+    was started with. Counts cover the recent log window, not all time."""
+    evs = []
+    for key, label, cfgpath in STRATEGIES:
+        if not os.path.exists(cfgpath):
+            continue
+        try:
+            scfg = acfg if (key == "base" and acfg is not None) else Config.load(cfgpath)
+        except Exception:
+            continue
+        evs.extend(parse_rejects(read_log_lines(scfg.log_path, REJECT_TAIL_BYTES), label))
+    evs.sort(key=lambda e: e["ts"])
+
+    out: dict = {}
+    per: dict = {}
+    for e in evs:
+        cat, lbl = e["cat"], e["strategy"]
+        b = out.setdefault(cat, {"n": 0, "by": {}})
         b["n"] += 1
-        b["last_symbol"], b["last_reason"], b["last_ts"] = sym, reason.strip(), ts[:16]
-        recent.append({"ts": ts, "symbol": sym, "cat": cat})
-    out["recent"] = recent[-10:]  # event feed for the rejection airlock animation
+        b["last_symbol"], b["last_reason"] = e["symbol"], e["reason"]
+        b["last_ts"], b["last_strategy"] = e["ts"][:16], lbl
+        sb = b["by"].setdefault(lbl, {"n": 0})  # per-strategy last, for its own gate table
+        sb["n"] += 1
+        sb["last_symbol"], sb["last_reason"], sb["last_ts"] = e["symbol"], e["reason"], e["ts"][:16]
+        s = per.setdefault(lbl, {"label": lbl, "n": 0, "cats": {}, "_syms": set()})
+        s["n"] += 1
+        s["cats"][cat] = s["cats"].get(cat, 0) + 1
+        s["_syms"].add(e["symbol"])
+        s["last_ts"], s["last_symbol"], s["last_cat"] = e["ts"][:16], e["symbol"], cat
+
+    strategies = []
+    for _, lbl, _ in STRATEGIES:  # stable BASE/BOUNCE/HOLDER/HOMERUN order
+        s = per.get(lbl)
+        if not s:
+            continue
+        s["symbols"] = len(s.pop("_syms"))
+        s["top_cat"] = max(s["cats"], key=s["cats"].get)
+        strategies.append(s)
+
+    out["recent"] = evs[-14:]  # event feed for the airlock animation + ticker
+    out["strategies"] = strategies
+    out["window_n"] = len(evs)
     return out
+
+
+def wallets_state():
+    """Harvested top-trader wallet stats (bot/wallets.py sightings db)."""
+    c = acfg or cfg
+    try:
+        return botwallets.snapshot(c.wt_db_path, c.wt_tracked_path)
+    except Exception:
+        return None
 
 
 def build_state() -> dict:
@@ -447,6 +665,7 @@ def build_state() -> dict:
             "value_sol": round(sol(value or 0), 4),
             "quote_ok": quote_ok,
             "spark": spark,
+            "candles": ws_candles(p.mint),
         })
 
     closed = db.closed_positions(limit=200)
@@ -469,12 +688,18 @@ def build_state() -> dict:
     }
 
     journal = _read_json(os.path.join("reports", "trade_journal.json")) or {}
+    px = sol_usd_price()
+    strategies_live = strategy_states()
+    live_sorties = sorted(
+        (r for s in strategies_live for r in s["closed_recent"]),
+        key=lambda r: r.get("closed_at") or "", reverse=True)[:12]
     return {
+        "sol_price_usd": round(px, 2) if px is not None else None,
         "now": iso_now(),
         "mode": cfg.mode,
         "bot_status": bot_status(),
         "ws": _read_json(os.path.join("reports", "ws_status.json")),
-        "rejects": reject_counts(lines),
+        "rejects": reject_state(),
         "updates": (_read_json(os.path.join("reports", "updates.json")) or {}).get("rows", []),
         "scan": scan,
         "config": {
@@ -489,12 +714,20 @@ def build_state() -> dict:
             "slippage_bps": cfg.slippage_bps,
             "scan_interval_sec": cfg.scan_interval_sec,
         },
+        # `open`/`closed`/`realized_today_sol` are the LAUNCH CONFIG's book only
+        # (the units panel and its charts are scoped to it). `fleet` is the
+        # roll-up across every strategy ledger - the header tiles use that.
         "open": open_out,
         "closed": closed_out,
         "realized_today_sol": round(sol(db.realized_today_lamports()), 4),
+        "fleet": fleet_totals(strategies_live),
         "wallet": wallet_info(),
         "asym": asym_state(),
+        "strategies": strategies_live,
+        "live_sorties": live_sorties,
+        "wallets": wallets_state(),
         "ops": ops_progress(),
+        "strategy_lab": _read_json(os.path.join("reports", "strategy_lab.json")),
         "backtest_sorties": journal.get("rows", [])[:10],
         "backtest_strategy": journal.get("strategy"),
         "log_tail": lines[-30:],
@@ -531,6 +764,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, "text/html; charset=utf-8", blcards.render_page().encode("utf-8"))
             except Exception as exc:
                 self._send(500, "text/plain", f"blacklist page error: {exc}".encode())
+        elif self.path == "/wallets":
+            try:
+                self._send(200, "text/html; charset=utf-8", walletpage.render_page().encode("utf-8"))
+            except Exception as exc:
+                self._send(500, "text/plain", f"wallets page error: {exc}".encode())
+        elif self.path == "/fundergraph":
+            try:
+                self._send(200, "text/html; charset=utf-8", fundergraph.render_page().encode("utf-8"))
+            except Exception as exc:
+                self._send(500, "text/plain", f"fundergraph page error: {exc}".encode())
         elif self.path == "/api/blacklist":
             self._send(200, "application/json", json.dumps({
                 "manual": _read_json(MANUAL_BLOCKLIST_PATH) or {},
@@ -538,6 +781,8 @@ class Handler(BaseHTTPRequestHandler):
             }).encode())
         elif self.path == "/api/mc/refresh":
             self._send(200, "application/json", json.dumps(mc_refresh_status()).encode())
+        elif self.path == "/api/copytrade":
+            self._send(200, "application/json", json.dumps(ct_progress()).encode())
         elif self.path == "/api/bdusage":
             try:
                 snap = bdusage.snapshot()
@@ -563,6 +808,11 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/mc/refresh":
             try:
                 self._send(200, "application/json", json.dumps(mc_refresh_start()).encode())
+            except Exception as exc:
+                self._send(500, "application/json", json.dumps({"error": str(exc)}).encode())
+        elif self.path == "/api/copytrade/run":
+            try:
+                self._send(200, "application/json", json.dumps(ct_run_start()).encode())
             except Exception as exc:
                 self._send(500, "application/json", json.dumps({"error": str(exc)}).encode())
         else:

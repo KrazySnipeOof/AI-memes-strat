@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import time
 
-from . import insiders, jupiter, safety, scanner, smartmoney, strategy
+from . import insiders, jupiter, manip, safety, scanner, screens, smartmoney, strategy, wallets
 from .config import Config, LAMPORTS_PER_SOL
 from .execution import LiveBroker, PaperBroker
 from .portfolio import Portfolio, Position
@@ -35,12 +35,17 @@ class Bot:
         self.cfg = cfg
         self.session = make_session()
         self.db = Portfolio(cfg.db_path, cfg.mode)
+        wallets.init(cfg)
         self.broker = LiveBroker(cfg, self.session) if cfg.mode == "live" else PaperBroker(cfg, self.session)
         self.feed = None
         if cfg.ws_enabled:
             from .birdeye_ws import BirdeyeFeed
             self.feed = BirdeyeFeed(cfg)
             self.feed.start()
+        self.copy = None
+        if cfg.copy_entry_enabled:
+            from .copytrade import CopyFeed
+            self.copy = CopyFeed(cfg)
 
     # ------------------------------------------------------------------
     # Open-position management
@@ -60,8 +65,15 @@ class Bot:
         q = jupiter.get_quote(self.session, pos.mint, jupiter.SOL_MINT, pos.tokens_raw, self.cfg.slippage_bps)
         if q is None:
             fails = self.db.bump_quote_failures(pos)
-            suffix = " - liquidity may be gone (possible rug)" if fails >= 8 else ""
-            log.warning("no sell quote for %s (attempt %d)%s", pos.symbol, fails, suffix)
+            if fails >= self.cfg.void_after_quote_failures:
+                # unsellable for many cycles = rugged. Void it (kept in ledger,
+                # excluded from PnL) instead of letting it hang at -100% forever.
+                self.db.void_position(pos, "rug_void")
+                log.warning("VOID %-12s rugged - no sell quote after %d attempts; "
+                            "kept in ledger, excluded from PnL", pos.symbol, fails)
+                return
+            log.warning("no sell quote for %s (attempt %d) - liquidity may be gone (possible rug)",
+                        pos.symbol, fails)
             return
         self.db.reset_quote_failures(pos)
 
@@ -120,6 +132,13 @@ class Bot:
         if self.feed and self.cfg.ws_discovery:
             candidates.extend(self.feed.promote_candidates(
                 self.session, known={c.mint for c in candidates} | held))
+        # Copy entry: a screened grinder wallet's buy is a discovery signal.
+        # Put these FIRST - they are time-critical (<=5m follow lag) and the
+        # per-cycle entry/deep-check budgets are spent in list order.
+        if self.copy:
+            copies = self.copy.candidates(
+                self.session, known={c.mint for c in candidates} | held)
+            candidates = copies + candidates
         self.db.record_candidates(candidates)
         if self.cfg.narrative_keywords:
             if self.cfg.narrative_require:
@@ -152,6 +171,53 @@ class Bot:
                     log.info("reject %-12s %s", cand.symbol, setup_why)
                     continue
                 signal_why = f"{signal_why} | {setup_why}"
+            # local candle-based gates (moonshot screen + human filter). When
+            # the setup gate is on it has already backfilled; when off (home-run)
+            # backfill here so the gates aren't starved of candles.
+            gate_rows = None
+            if self.feed and (self.cfg.homerun_screen_enabled or self.cfg.human_filter_enabled
+                              or self.cfg.screen_enabled):
+                gate_rows = (self.feed.candle_rows(cand.mint) if self.cfg.ws_setup_filter
+                             else self.feed.fresh_candles(cand, self.session, backfill_budget))
+            # family entry screen (sniper / volume_anomaly / dip)
+            if self.feed and self.cfg.screen_enabled:
+                ok, sc_why = screens.check(self.cfg.screen_family, gate_rows or [], self.cfg.screen_params)
+                if not ok:
+                    log.info("reject %-12s %s", cand.symbol, sc_why)
+                    continue
+                signal_why = f"{signal_why} | {sc_why}"
+            # moonshot screen: only low-mcap tokens with momentum (room to 10x)
+            if self.feed and self.cfg.homerun_screen_enabled:
+                if not gate_rows or len(gate_rows) < 8:
+                    log.info("reject %-12s moonshot: thin candles", cand.symbol)
+                    continue
+                price = gate_rows[-1][4]
+                mcap = price * self.cfg.homerun_supply
+                cutoff = gate_rows[-1][0] - 15 * 60
+                ref = [r[4] for r in gate_rows if r[0] <= cutoff and r[4] > 0]
+                mom = price / ref[-1] if ref else 1.0
+                if mcap > self.cfg.homerun_max_mcap or mom < self.cfg.homerun_min_mom:
+                    log.info("reject %-12s moonshot: mcap $%s / mom %.2fx (need <=$%s / >=%.2fx)",
+                             cand.symbol, f"{mcap:,.0f}", mom,
+                             f"{self.cfg.homerun_max_mcap:,.0f}", self.cfg.homerun_min_mom)
+                    continue
+                signal_why = f"{signal_why} | moonshot ok (mcap ${mcap:,.0f}, mom {mom:.2f}x)"
+            # human-token gate: reject charts that already look like a rug /
+            # wash-ramp / spike-dump by entry time (local, no API).
+            if self.feed and self.cfg.human_filter_enabled:
+                verdict = manip.classify(gate_rows or [], False)
+                cls = (verdict or {}).get("class")
+                if cls != self.cfg.human_filter_min_class:
+                    hf_why = f"non-human token: {cls or 'unclassifiable (thin candles)'}"
+                    if self.cfg.human_filter_shadow:
+                        log.info("shadow %-12s would reject: %s", cand.symbol, hf_why)
+                        signal_why = f"{signal_why} | SHADOW-FAIL human: {hf_why}"
+                    else:
+                        log.info("reject %-12s %s", cand.symbol, hf_why)
+                        continue
+                elif verdict:
+                    signal_why = (f"{signal_why} | human ok ({cls}, "
+                                  f"human {verdict['human']}/manip {verdict['manip']})")
             passed_cheap += 1
             deep_checks += 1
 
@@ -174,7 +240,8 @@ class Bot:
             else:
                 ins_why = "insider check disabled"
             if self.cfg.smart_money_enabled:
-                sm_rep = smartmoney.check(self.session, cand.mint, self.cfg)
+                sm_rep = smartmoney.check(self.session, cand.mint, self.cfg,
+                                          symbol=cand.symbol)
                 ok, sm_why = smartmoney.verdict(sm_rep, self.cfg)
                 if not ok:
                     if self.cfg.smart_money_shadow:
@@ -186,6 +253,10 @@ class Bot:
                         continue
             else:
                 sm_why = "smart-money check disabled"
+            hits = wallets.tracked_for_mint(cand.mint)
+            if hits:
+                log.info("shadow %-12s tracked-wallet: %s", cand.symbol, ", ".join(hits))
+                sm_why = f"{sm_why} | TRACKED-WALLET: {', '.join(hits)}"
             ok, rt_why = safety.roundtrip_check(
                 self.session, cand.mint, self.cfg.position_size_lamports, self.cfg
             )

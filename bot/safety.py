@@ -73,7 +73,15 @@ def rugcheck(session, mint: str, cfg: Config) -> RugcheckResult:
     if score > cfg.max_rugcheck_score:
         return RugcheckResult(False, f"rugcheck score {score:.0f} > max {cfg.max_rugcheck_score:.0f}", score)
 
+    # LP-lock gate: unlocked/thinly-locked liquidity is pullable = rug risk.
+    # Only fires when rugcheck actually reports a lock pct (>=0); missing data
+    # (-1) is allowed as before. This is what would have blocked the HAPPYCAT
+    # entry (logged "LP locked 0%" but passed on score alone).
     lp = fnum(data.get("lpLockedPct"), default=-1.0)
+    if 0 <= lp < cfg.min_lp_locked_pct:
+        return RugcheckResult(
+            False, f"rugcheck LP locked only {lp:.0f}% < {cfg.min_lp_locked_pct:.0f}% "
+                   f"(pullable liquidity - rug risk)", score)
     extra = f", LP locked {lp:.0f}%" if lp >= 0 else ""
     return RugcheckResult(True, f"rugcheck score {score:.0f}{extra}", score)
 

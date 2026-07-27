@@ -218,6 +218,8 @@ def render_page() -> str:
   <a class="tab" href="/trades" title="Per-trade journal cards">TRADE JOURNAL</a>
   <a class="tab" href="/montecarlo" title="Monte Carlo equity-path simulation">MONTE CARLO</a>
   <span class="tab on">BLACKLIST</span>
+  <a class="tab" href="/wallets" title="Scouted copy-trade wallets + tracked watchlist + live harvest">WALLETS</a>
+  <a class="tab" href="/fundergraph" title="Rug lineage: why deployer/funder reputation can't work">FUNDER GRAPH</a>
   <div class="bd"><span class="bdlab">BIRDEYE API</span><span id="bdtext">no usage tracked yet</span>
     <div class="bdbar"><div id="bdfill"></div></div></div>
 </div>

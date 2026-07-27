@@ -1,11 +1,11 @@
 {
   "mode": "paper",
-  "paper_starting_balance_sol": 1.0,
+  "paper_starting_balance_sol": 5.0,
   "rpc_url": "https://api.mainnet-beta.solana.com",
   "wallet_pubkey": "5fAG5PkzwJJ3WrFeU86smsZ8cfEoLVYYfF833e39XE1w",
-  "db_path": "memebot-asym.sqlite",
-  "log_path": "memebot-asym.log",
-  "scan_interval_sec": 45,
+  "db_path": "memebot-grinder.sqlite",
+  "log_path": "memebot-grinder.log",
+  "scan_interval_sec": 60,
   "position_size_sol": 0.25,
   "max_positions": 3,
   "max_entries_per_cycle": 1,
@@ -15,10 +15,10 @@
   "paper_fee_lamports": 150000,
   "api_pause_sec": 0.4,
   "filters": {
-    "min_liquidity_usd": 20000,
+    "min_liquidity_usd": 5000,
     "max_liquidity_usd": 2000000,
-    "min_age_min": 30,
-    "max_age_min": 1440,
+    "min_age_min": 0,
+    "max_age_min": 15,
     "max_fdv_to_liquidity": 60,
     "min_vol_m5_usd": 2000,
     "min_sells_m5": 3,
@@ -51,9 +51,26 @@
     "min_holders": 50
   },
   "narrative": {
-    "keywords": ["worldcup", "world cup", "fifa", "argentina", "spain", "france", "england",
-                 "brazil", "portugal", "messi", "mbappe", "yamal", "yamz", "cubarsi",
-                 "soccer", "futbol", "goal", "cup"],
+    "keywords": [
+      "worldcup",
+      "world cup",
+      "fifa",
+      "argentina",
+      "spain",
+      "france",
+      "england",
+      "brazil",
+      "portugal",
+      "messi",
+      "mbappe",
+      "yamal",
+      "yamz",
+      "cubarsi",
+      "soccer",
+      "futbol",
+      "goal",
+      "cup"
+    ],
     "require": false
   },
   "entry": {
@@ -63,19 +80,22 @@
     "min_buy_sell_edge": 1.1
   },
   "exits": {
-    "stop_loss_pct": 40,
+    "stop_loss_pct": 45,
     "take_profits": [
-      { "multiple": 1.35, "sell_fraction_of_remaining": 0.3 }
+      {
+        "multiple": 2.0,
+        "sell_fraction_of_remaining": 0.5
+      }
     ],
-    "hard_tp_multiple": 20.0,
+    "hard_tp_multiple": 8.0,
     "trailing_stop_pct": 30,
-    "max_hold_min": 120
+    "max_hold_min": 240
   },
   "risk": {
     "daily_loss_limit_sol": 0.75
   },
   "websocket": {
-    "enabled": true,
+    "enabled": false,
     "discovery": true,
     "apply_setup_filter": true,
     "backfill_rest": true,
@@ -89,11 +109,22 @@
   "wallet_tracker": {
     "enabled": true,
     "db_path": "wallets.sqlite",
-    "tracked_path": "reports/tracked_wallets.json"
+    "tracked_path": "reports/tracked_wallets.json",
+    "copy_entry": {
+      "enabled": true,
+      "scout_path": "reports/wallet_scout.json",
+      "min_wallet_win_rate": 60.0,
+      "min_round_trips": 10,
+      "min_median_hold_min": 45.0,
+      "max_follow_lag_min": 5.0,
+      "max_wallets": 6,
+      "poll_interval_sec": 150.0
+    }
   },
   "human_filter": {
     "enabled": true,
     "shadow": false,
     "min_class": "ORGANIC"
-  }
+  },
+  "strategy": "grinder"
 }

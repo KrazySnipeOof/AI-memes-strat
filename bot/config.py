@@ -47,6 +47,9 @@ class Config:
         self.require_rugcheck: bool = bool(s.get("require_rugcheck", True))
         self.max_rugcheck_score: float = float(s.get("max_rugcheck_score", 40))
         self.max_roundtrip_loss_pct: float = float(s.get("max_roundtrip_loss_pct", 12))
+        # reject when rugcheck reports LP locked below this % (pullable = rug
+        # risk); 0 disables. Default 50 protects all bots after the HAPPYCAT rug.
+        self.min_lp_locked_pct: float = float(s.get("min_lp_locked_pct", 50))
 
         i = raw.get("insiders", {})
         self.insiders_enabled: bool = bool(i.get("enabled", True))
@@ -96,6 +99,9 @@ class Config:
 
         r = raw.get("risk", {})
         self.daily_loss_limit_sol: float = float(r.get("daily_loss_limit_sol", 0.75))
+        # after this many consecutive failed sell quotes a position is treated
+        # as rugged and VOIDED - kept in the ledger but excluded from PnL/stats.
+        self.void_after_quote_failures: int = int(r.get("void_after_quote_failures", 8))
 
         # Birdeye websocket feed (Premium plan) - fully opt-in; enabled: false
         # keeps the original zero-Birdeye data path byte-identical.
@@ -110,6 +116,56 @@ class Config:
         self.ws_min_listing_liquidity: float = float(w.get("min_listing_liquidity_usd", 2_000))
         self.ws_min_cum_vol_usd: float = float(w.get("min_cum_vol_usd", 8_000))
         self.ws_persist_state: bool = bool(w.get("persist_state", True))
+
+        # Wallet harvester (bot/wallets.py) - observational only; enabled: false
+        # leaves the smart-money gate's data path byte-identical.
+        wt = raw.get("wallet_tracker", {})
+        self.wt_enabled: bool = bool(wt.get("enabled", False))
+        self.wt_db_path: str = wt.get("db_path", "wallets.sqlite")
+        self.wt_tracked_path: str = wt.get(
+            "tracked_path", os.path.join("reports", "tracked_wallets.json"))
+
+        # Copy entry (bot/copytrade.py): enter when a screened grinder wallet
+        # buys, instead of waiting for the 30m discovery funnel. enabled: false
+        # leaves the harvester observational and the funnel byte-identical.
+        ce = wt.get("copy_entry", {})
+        self.copy_entry_enabled: bool = bool(ce.get("enabled", False))
+        self.copy_scout_path: str = ce.get(
+            "scout_path", os.path.join("reports", "wallet_scout.json"))
+        self.copy_min_win_rate: float = float(ce.get("min_wallet_win_rate", 60.0))
+        self.copy_min_round_trips: int = int(ce.get("min_round_trips", 10))
+        self.copy_min_median_hold_min: float = float(ce.get("min_median_hold_min", 45.0))
+        self.copy_max_follow_lag_min: float = float(ce.get("max_follow_lag_min", 5.0))
+        self.copy_max_wallets: int = int(ce.get("max_wallets", 6))
+        self.copy_poll_interval_sec: float = float(ce.get("poll_interval_sec", 150.0))
+        self.copy_state_path: str = ce.get("state_path", "")
+
+        # Human-token entry gate (bot/manip.py): reject candidates that don't
+        # classify ORGANIC on their pre-entry candles (excludes rugs/wash-ramps/
+        # spike-dumps already damaged by entry time). Needs the WS candle store,
+        # so it only acts when the websocket feed is on. enabled: false =
+        # byte-identical behavior. shadow: true logs the verdict but still enters.
+        hf = raw.get("human_filter", {})
+        self.human_filter_enabled: bool = bool(hf.get("enabled", False))
+        self.human_filter_shadow: bool = bool(hf.get("shadow", True))
+        self.human_filter_min_class: str = str(hf.get("min_class", "ORGANIC"))
+
+        # Home-run moonshot screen (bot/main.py): only enter low-mcap tokens
+        # with momentum (room to 10x). Local, uses WS candles. enabled: false
+        # = byte-identical (base/bounce/holder never set it).
+        hr = raw.get("homerun_screen", {})
+        self.homerun_screen_enabled: bool = bool(hr.get("enabled", False))
+        self.homerun_max_mcap: float = float(hr.get("max_entry_mcap_usd", 25_000))
+        self.homerun_min_mom: float = float(hr.get("min_momentum_15m", 1.3))
+        self.homerun_supply: float = float(hr.get("supply", 1e9))
+
+        # Family entry screens (bot/screens.py): sniper / volume_anomaly / dip.
+        # Config-driven; absent family = disabled (byte-identical).
+        es = raw.get("entry_screen", {})
+        self.screen_family: str = str(es.get("family", "")).strip()
+        self.screen_params: dict = {k: v for k, v in es.items()
+                                    if k not in ("family", "enabled", "note")}
+        self.screen_enabled: bool = bool(es.get("enabled", True)) and bool(self.screen_family)
 
     @property
     def position_size_lamports(self) -> int:

@@ -66,6 +66,11 @@
   .ptab .verdict.bad{background:#3b000f;color:#ff8ba0}
   .ptab .stab{cursor:pointer;user-select:none}
   .ptab .stab.off{background:#1a1a1a;color:#6b6b6b}
+  .ptab.clk{cursor:pointer;user-select:none}
+  .ptab.clk:hover{background:var(--orange-neon)}
+  .ptab .caret{display:inline-block;margin-right:7px;font-size:9px;transition:transform .15s ease}
+  .panel.collapsed .pbody{display:none}
+  .panel.collapsed .ptab .caret{transform:rotate(-90deg)}
   .pbody{padding:10px 12px;font-size:12.5px}
   .kv{display:flex;justify-content:space-between;gap:8px;padding:2.5px 0;border-bottom:1px dotted #1e1e2a}
   .kv:last-child{border-bottom:none}
@@ -92,11 +97,21 @@
   .chip.good{color:var(--green-neon);border-color:var(--green)}
   .chip.warn{color:var(--amber-neon);border-color:var(--amber)}
   .chip.crit{color:#ff8ba0;border-color:var(--red)}
+  .chip.info{color:#7ad0f0;border-color:var(--cyan)}
   .ubody{padding:10px 12px}
   .sync{display:flex;align-items:baseline;justify-content:space-between}
   .sync .lbl{color:var(--ink3);font-size:10.5px;letter-spacing:2px}
   .sync .val{font-size:30px;font-weight:bold;letter-spacing:1px}
   .sync .val small{font-size:14px;color:var(--ink2)}
+  .sync .val.pos{color:var(--green-neon)}
+  .sync .val.neg{color:var(--red)}
+  .upnl{display:flex;align-items:flex-start;justify-content:space-between;margin-top:2px}
+  .upnl .lbl{color:var(--ink3);font-size:10.5px;letter-spacing:2px}
+  .upnl .amt{text-align:right;line-height:1.3}
+  .upnl .amt .sol{font-size:15px;font-weight:bold;letter-spacing:.5px}
+  .upnl .amt .usd{display:block;font-size:11px;opacity:.75}
+  .upnl.pos .amt{color:var(--green-neon)}
+  .upnl.neg .amt{color:var(--red)}
   .bar{height:14px;background:var(--panel2);border:1px solid var(--line);position:relative;margin:8px 0 2px}
   .bar .fill{height:100%;background:var(--green)}
   .bar .fill.warn{background:var(--amber)} .bar .fill.crit{background:var(--red)}
@@ -109,6 +124,15 @@
   .spark .spark-base, .spark line{stroke:var(--ink3);stroke-width:1;stroke-dasharray:3 3}
   .spark-empty{height:48px;display:flex;align-items:center;justify-content:center;color:var(--ink3);
     font-size:10.5px;letter-spacing:2px;border:1px dashed #1e1e2a}
+  /* 1m candle minichart: up/down pair #00a869/#c81e3c is CVD-validated on this
+     surface (deutan dE 9.7); status --red stays reserved for text/alerts */
+  .chartcap{display:flex;justify-content:space-between;color:var(--ink3);font-size:9.5px;
+    letter-spacing:1px;margin-bottom:2px}
+  .candle{width:100%;height:74px;display:block}
+  .candle line{stroke-width:1;vector-effect:non-scaling-stroke}
+  .candle line.up{stroke:var(--green)} .candle line.dn{stroke:#c81e3c}
+  .candle rect.up{fill:var(--green)} .candle rect.dn{fill:#c81e3c}
+  .candle rect.vol{opacity:.45}
   .umeta{color:var(--ink2);font-size:11px;margin-top:8px;letter-spacing:.5px}
   .umeta b{color:var(--ink)}
   .cage{padding:26px;text-align:center;color:var(--ink2);letter-spacing:2px;font-size:13px}
@@ -144,24 +168,51 @@
     padding:3px 8px;font-size:11px;pointer-events:none;z-index:100;letter-spacing:1px}
 
   /* ---------- rejection airlock (live reject animation) ---------- */
-  #rejfx{position:relative;height:76px;overflow:hidden;background:var(--panel)}
+  /* one lane per live strategy: chips fly their own lane into the gate line */
+  #rejfx{position:relative;height:118px;overflow:hidden;background:var(--panel)}
   #rejfx::after{content:"";position:absolute;left:58%;top:5px;bottom:5px;
     border-left:2px dashed var(--red);opacity:.5}
   #rejfx .gatelbl{position:absolute;left:calc(58% + 8px);top:6px;color:var(--red);
     font-size:9px;letter-spacing:3px;opacity:.7}
-  .rchip{position:absolute;left:6px;display:inline-flex;align-items:center;gap:7px;
-    padding:4px 10px;background:var(--panel2);border:1px solid var(--cyan);
+  #rejrail{position:absolute;left:0;top:0;bottom:0;width:76px;
+    border-right:1px solid var(--line);background:rgba(0,0,0,.25)}
+  #rejrail .lane{position:absolute;left:8px;font-size:9px;letter-spacing:1.5px;white-space:nowrap}
+  #rejrail .lane i{display:block;font-style:normal;color:var(--ink3);
+    font-size:8.5px;letter-spacing:1px;margin-top:1px}
+  #rejempty{position:absolute;left:96px;top:48%;color:var(--ink3);font-size:10.5px;letter-spacing:2px}
+  /* one strategy colour, reused by the lane label, the flying chip and the ticker */
+  .sc-base{--sc:var(--green-neon)} .sc-bounce{--sc:var(--amber-neon)}
+  .sc-holder{--sc:#7ad0f0} .sc-homerun{--sc:#c39bff} .sc-other{--sc:var(--ink2)}
+  #rejrail .lane, #rejtick .rt .s, #rejtick .hdr .tg{color:var(--sc)}
+  .rchip{--d:200px;--sc:var(--cyan);position:absolute;left:84px;display:inline-flex;
+    align-items:center;gap:7px;padding:4px 10px;background:var(--panel2);border:1px solid var(--sc);
     font-size:11.5px;white-space:nowrap;will-change:transform,opacity;
     animation:rchip-run 2.8s cubic-bezier(.25,.6,.3,1) forwards}
   .rchip b{letter-spacing:.5px}
+  .rchip .rstrat{color:var(--sc);font-size:9px;letter-spacing:1.5px}
   .rchip .rgate{color:var(--ink3);font-size:9.5px;letter-spacing:1px}
+
+  /* persistent ticker under the stage — the airlock is empty between events */
+  #rejtick{border-top:1px solid var(--line);padding:7px 11px 9px;background:var(--panel)}
+  #rejtick .hdr{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;
+    color:var(--ink3);letter-spacing:2px;font-size:10px;margin-bottom:4px}
+  #rejtick .rt{display:flex;gap:9px;align-items:baseline;font-size:11.5px;
+    padding:2.5px 0;border-bottom:1px dotted #1e1e2a}
+  #rejtick .rt:last-child{border-bottom:none}
+  #rejtick .rt .t{color:var(--ink3);font-size:10px;white-space:nowrap}
+  #rejtick .rt .s{flex:0 0 62px;font-size:9px;letter-spacing:1.5px}
+  #rejtick .rt .sym{flex:0 0 116px;font-weight:bold;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap}
+  #rejtick .rt .why{flex:1;min-width:0;color:var(--ink2);overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap}
+  #rejtick .rt .why em{font-style:normal;color:var(--red)}
   .rchip .stamp{position:absolute;top:-9px;right:-10px;font-size:9px;font-weight:bold;
     color:var(--red);border:1px solid var(--red);padding:0 4px;background:var(--bg);
     transform:rotate(-12deg);opacity:0;animation:rstamp 2.8s forwards}
   @keyframes rchip-run{
     0%{transform:translateX(0);opacity:0}
     7%{opacity:1}
-    42%{transform:translateX(var(--d));border-color:var(--cyan)}
+    42%{transform:translateX(var(--d));border-color:var(--sc)}
     47%{transform:translateX(calc(var(--d) + 7px));border-color:var(--red);color:var(--red)}
     53%{transform:translateX(calc(var(--d) - 3px));border-color:var(--red)}
     62%{transform:translateX(var(--d)) translateY(0) rotate(0);opacity:1;border-color:var(--red)}
@@ -191,6 +242,8 @@
   <a class="tab" href="/trades">TRADE JOURNAL</a>
   <a class="tab" href="/montecarlo">MONTE CARLO</a>
   <a class="tab" href="/blacklist" title="Charts purged from the sample">BLACKLIST</a>
+  <a class="tab" href="/wallets" title="Scouted copy-trade wallets + tracked watchlist + live harvest">WALLETS</a>
+  <a class="tab" href="/fundergraph" title="Rug lineage: why deployer/funder reputation can't work">FUNDER GRAPH</a>
   <div class="bd" title="Lite plan: 2.5M CU/cycle (anchored the 20th), 15 RPS, overage $15/1M CU. Local ledger + reconstructed baseline (Birdeye has no usage API - their Usages/Metrics page is authoritative). OHLCV CU cost is an estimate.">
     <span class="bdlab">BIRDEYE API</span><span id="bdtext">no usage tracked yet</span>
     <div class="bdbar"><div id="bdfill"></div></div>
@@ -239,6 +292,11 @@
 
   <div class="sect"><h2>SORTIE RECORD</h2><span class="jp">戦闘記録</span></div>
   <div class="tiles" id="tiles"></div>
+  <div style="color:var(--ink3);font-size:10px;letter-spacing:2px;margin:2px 0 6px">BY STRATEGY 戦略別</div>
+  <div class="tiles" id="tiles-strat"></div>
+
+  <div class="sect"><h2>STRATEGY LAB</h2><span class="jp">戦術研究室</span></div>
+  <div id="stratlab"></div>
 
   <div class="sect"><h2>R&amp;D OPERATIONS</h2><span class="jp">作戦進行状況</span></div>
   <div class="panel"><div class="ptab"><span>PIPELINE — SAMPLE FETCHES &amp; SWEEPS</span><span class="verdict ok" id="v-ops">IDLE</span></div>
@@ -248,16 +306,30 @@
   <div class="cols" id="asym"></div>
 
   <div class="panel">
-    <div class="ptab"><span>REJECTION AIRLOCK — LIVE FEED</span><span class="verdict warn">拒否</span></div>
-    <div id="rejfx"><span class="gatelbl">ENTRY GATES</span></div>
+    <div class="ptab"><span>REJECTION AIRLOCK — LIVE FEED · ALL STRATEGIES</span><span class="verdict warn" id="rejbadge">拒否</span></div>
+    <div id="rejfx"><div id="rejrail"></div><span class="gatelbl">ENTRY GATES</span>
+      <span id="rejempty">NO REJECTS IN THE CURRENT LOG WINDOW</span></div>
+    <div id="rejtick"></div>
   </div>
 
   <div class="sect"><h2>SYSTEM UPDATES</h2><span class="jp">更新履歴</span></div>
-  <div class="panel">
-    <div class="ptab"><span>CHANGELOG — PIPELINE &amp; PERFORMANCE</span><span class="verdict ok">LOGGED</span></div>
-    <div class="pbody"><table>
+  <div class="panel collapsed" id="upd-panel">
+    <div class="ptab clk" id="upd-tab" role="button" tabindex="0" aria-expanded="false" aria-controls="upd-body"
+         title="click to expand / collapse the changelog">
+      <span><span class="caret">&#9660;</span>CHANGELOG — PIPELINE &amp; PERFORMANCE<span id="upd-count" style="opacity:.7"></span></span>
+      <span class="verdict ok">LOGGED</span></div>
+    <div class="pbody" id="upd-body"><table>
       <thead><tr><th>TIME (UTC)</th><th>UPDATE</th><th>PERFORMANCE IMPACT</th></tr></thead>
       <tbody id="updates"></tbody></table></div>
+  </div>
+
+  <div class="sect"><h2>WALLET INTEL</h2><span class="jp">追跡財布</span></div>
+  <div class="panel collapsed" id="wal-panel">
+    <div class="ptab clk" id="wal-tab" role="button" tabindex="0" aria-expanded="false" aria-controls="wallets-body"
+         title="click to expand / collapse the wallet harvest">
+      <span><span class="caret">&#9660;</span>TOP-TRADER HARVEST — SHADOW ONLY</span>
+      <span class="verdict warn" id="wallets-badge">—</span></div>
+    <div class="pbody" id="wallets-body"></div>
   </div>
 
   <div class="cols">
@@ -268,7 +340,7 @@
           <span class="verdict stab" id="tab-bt" title="backtest journal (simulated fills)">BACKTEST 模擬</span>
         </span></div>
       <table>
-        <thead><tr><th>CLOSED (UTC)</th><th>TARGET</th><th style="text-align:right">MULT</th><th style="text-align:right">PNL (SOL)</th><th>RESULT</th></tr></thead>
+        <thead><tr><th>CLOSED (UTC)</th><th>TARGET</th><th>STRAT</th><th style="text-align:right">MULT</th><th style="text-align:right">PNL (SOL)</th><th>RESULT</th></tr></thead>
         <tbody id="sorties"></tbody>
       </table>
     </div>
@@ -290,6 +362,8 @@
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmtSol = (v, sign) => (sign && v > 0 ? '+' : '') + v.toFixed(4);
+const fmtPx = v => '$' + (v >= 1 ? v.toFixed(2) : v.toPrecision(3));
+const fmtVol = v => v >= 1000 ? (v/1000).toFixed(1) + 'k' : v.toFixed(0);
 
 /* ---- Birdeye usage meter (shared look with /trades) ---- */
 const bdFmt = n => n >= 1e6 ? (n/1e6).toFixed(2)+'M' : n >= 1e3 ? (n/1e3).toFixed(1)+'K' : String(n);
@@ -347,6 +421,34 @@ function sparkline(vals){
   </svg>`;
 }
 
+function candleChart(rows){
+  // rows: [[ts,o,h,l,c,v_usd],...] 1m token candles from the Birdeye WS store
+  const w = 260, ph = 50, vh = 16, h = 74;   // price pane 0-50, volume pane bottom
+  const n = rows.length;
+  const lo = Math.min(...rows.map(r => r[3])), hi = Math.max(...rows.map(r => r[2]));
+  const span = (hi - lo) || hi || 1;
+  const vmax = Math.max(...rows.map(r => r[5]));
+  const bw = w / n, cw = Math.max(1.2, bw * 0.62);
+  const y = v => 2 + (ph - 4) * (1 - (v - lo) / span);
+  let mk = '';
+  rows.forEach((r, i) => {
+    const x = i*bw + bw/2, cls = r[4] >= r[1] ? 'up' : 'dn';
+    const yo = y(r[1]), yc = y(r[4]);
+    mk += `<line class="${cls}" x1="${x.toFixed(2)}" x2="${x.toFixed(2)}" y1="${y(r[2]).toFixed(2)}" y2="${y(r[3]).toFixed(2)}"/>` +
+      `<rect class="${cls}" x="${(x-cw/2).toFixed(2)}" y="${Math.min(yo,yc).toFixed(2)}" width="${cw.toFixed(2)}" height="${Math.max(.8, Math.abs(yo-yc)).toFixed(2)}"/>`;
+    const vb = vmax > 0 ? Math.max(.6, vh * r[5] / vmax) : .6;
+    mk += `<rect class="vol ${cls}" x="${(x-cw/2).toFixed(2)}" y="${(h-vb).toFixed(2)}" width="${cw.toFixed(2)}" height="${vb.toFixed(2)}"/>`;
+  });
+  return `<svg class="candle" viewBox="0 0 ${w} ${h}" data-c="${rows.map(r => r.join('|')).join(';')}" preserveAspectRatio="none">${mk}</svg>`;
+}
+
+function unitChart(p){
+  const rows = p.candles || [];
+  if (rows.length < 3) return sparkline(p.spark);
+  return `<div class="chartcap"><span>TOKEN PRICE · 1M CANDLES + VOL</span>
+    <span>${fmtPx(rows[rows.length-1][4])}</span></div>` + candleChart(rows);
+}
+
 function renderUnits(st){
   const el = $('units');
   if (!st.open.length){
@@ -362,15 +464,22 @@ function renderUnits(st){
       `<div class="tick stop" style="left:${(1-stop/100)/hardTp*100}%"></div>` +
       st.config.take_profits.map(tp => `<div class="tick" style="left:${tp.multiple/hardTp*100}%"></div>`).join('');
     const quoteWarn = p.quote_ok ? '' : ' &nbsp;<span class="chip crit">● NO SELL QUOTE</span>';
+    const pnlSol = p.banked_sol + p.value_sol - p.spent_sol;
+    const px = st.sol_price_usd || (st.wallet ? st.wallet.sol_price_usd : null);
+    const pnlCls = pnlSol > 0 ? 'pos' : pnlSol < 0 ? 'neg' : '';
+    const pnlUsd = px == null ? '≈ $—'
+      : '≈ ' + (pnlSol >= 0 ? '+' : '-') + '$' + Math.abs(pnlSol * px).toFixed(2);
     return `<div class="panel unit">
       <div class="uhead"><span class="utag">EVA UNIT-0${i}</span><span class="usym">${esc(p.symbol)}</span>
         <span class="chip ${s.cls}">${s.txt}</span></div>
       <div class="ubody">
-        <div class="sync"><span class="lbl">SYNC RATIO (VALUE MULTIPLE)</span>
-          <span class="val">${(p.multiple*100).toFixed(1)}<small>%</small></span></div>
+        <div class="sync"><span class="lbl">SYNC RATIO (PNL)</span>
+          <span class="val ${pnlCls}">${p.multiple > 1 ? '+' : ''}${((p.multiple-1)*100).toFixed(1)}<small>%</small></span></div>
+        <div class="upnl ${pnlCls}"><span class="lbl">ACTIVE PNL</span>
+          <span class="amt"><span class="sol">${fmtSol(pnlSol, true)} SOL</span><span class="usd">${pnlUsd}</span></span></div>
         <div class="bar"><div class="fill ${fillCls}" style="width:${pct}%"></div>${ticks}</div>
         <div class="ticklbl"><span>0</span><span>STOP ${(1-stop/100).toFixed(2)}x</span><span>2x</span><span>3x</span><span>${hardTp}x</span></div>
-        ${sparkline(p.spark)}
+        ${unitChart(p)}
         <div class="umeta">SPENT <b>${p.spent_sol.toFixed(4)}</b> ▸ BANKED <b>${p.banked_sol.toFixed(4)}</b> ▸ NOW <b>${p.value_sol.toFixed(4)}</b> SOL<br>
         PEAK <b>${p.peak.toFixed(2)}x</b> ▸ TP STAGE <b>${p.stage}</b> ▸ AGE <b>${Math.round(p.age_min)}m</b>${quoteWarn}</div>
       </div>
@@ -450,21 +559,56 @@ function renderMagi(st){
 }
 
 function renderTiles(st){
-  const c = st.closed;
+  // fleet-wide roll-up across every strategy ledger. st.closed/st.open are the
+  // launch config's book alone — these tiles claim to speak for the whole fleet,
+  // so they must not read one book.
+  const c = st.fleet || st.closed;
+  const openN = st.fleet ? st.fleet.open : st.open.length;
+  const today = st.fleet ? st.fleet.realized_today_sol : st.realized_today_sol;
+  const voidN = st.fleet ? st.fleet.voided : 0;
   const pnlCls = v => v > 0 ? 'pos' : v < 0 ? 'neg' : '';
+  const books = st.fleet ? ` across ${st.fleet.books_traded} book${st.fleet.books_traded === 1 ? '' : 's'}` : '';
+  const voidSub = voidN ? ` · ${voidN} void excluded` : '';
   $('tiles').innerHTML =
     `<div class="panel tile"><div class="lbl">WIN RATE</div>
       <div class="big">${c.win_rate === null ? '—' : c.win_rate + '%'}</div>
-      <div class="sub">${c.wins} W / ${c.count - c.wins} L of ${c.count} sorties</div></div>` +
+      <div class="sub">${c.wins} W / ${c.count - c.wins} L of ${c.count} sorties${books}</div></div>` +
     `<div class="panel tile"><div class="lbl">TOTAL PNL</div>
       <div class="big ${pnlCls(c.total_pnl_sol)}">${fmtSol(c.total_pnl_sol, true)}</div>
-      <div class="sub">SOL, all closed sorties</div></div>` +
+      <div class="sub">SOL, all closed sorties${voidSub}</div></div>` +
     `<div class="panel tile"><div class="lbl">REALIZED TODAY</div>
-      <div class="big ${pnlCls(st.realized_today_sol)}">${fmtSol(st.realized_today_sol, true)}</div>
-      <div class="sub">SOL (UTC day) — breaker at -${st.config.daily_loss_limit_sol}</div></div>` +
+      <div class="big ${pnlCls(today)}">${fmtSol(today, true)}</div>
+      <div class="sub">SOL (UTC day) — breaker at -${st.config.daily_loss_limit_sol} per book</div></div>` +
     `<div class="panel tile"><div class="lbl">SORTIES</div>
       <div class="big">${c.count}</div>
-      <div class="sub">${st.open.length} unit(s) currently deployed</div></div>`;
+      <div class="sub">${openN} unit(s) currently deployed</div></div>`;
+
+  // per-strategy breakdown row (BASE / BOUNCE / HOLDER) — each its own ledger
+  const strat = st.strategies || [];
+  const bd = $('tiles-strat');
+  if (bd){
+    bd.innerHTML = strat.map(s => {
+      const p = s.paper;
+      const balCls = p ? (p.balance_sol > p.start_sol ? 'pos' : p.balance_sol < p.start_sol ? 'neg' : '') : '';
+      // voids are rugged/unsellable positions: real SOL gone, but deliberately
+      // outside pnl and win rate. Show them or a book that only ever rugged
+      // reads as "0 sorties" — i.e. as though it had never traded at all.
+      const voidTag = p && p.voided
+        ? ` · <span class="neg" title="rugged / unsellable — excluded from pnl and win rate">` +
+          `${p.voided} void −${p.voided_sol.toFixed(4)}</span>`
+        : '';
+      const sub = p
+        ? `wr ${p.win_rate === null ? '—' : p.win_rate + '%'} · ${p.count} sortie${p.count === 1 ? '' : 's'} · ` +
+          `pnl <span class="${pnlCls(p.total_pnl_sol)}">${fmtSol(p.total_pnl_sol, true)}</span> · ${p.open} open` +
+          voidTag
+        : (s.running ? 'starting — first cycle creates the ledger' : 'not deployed');
+      return `<div class="panel tile">
+        <div class="lbl">${esc(s.label)} ${stratChip(s.label)}
+          <span class="verdict ${s.running ? 'ok' : 'warn'}" style="font-size:8px;padding:0 4px">${s.running ? 'ACTIVE' : 'IDLE'}</span></div>
+        <div class="big ${balCls}">${p ? p.balance_sol.toFixed(3) : '—'}<span style="font-size:12px;color:var(--ink3)"> SOL</span></div>
+        <div class="sub">${sub}</div></div>`;
+    }).join('') || `<div class="panel tile"><div class="sub">no live strategies reported</div></div>`;
+  }
 }
 
 function fmtAge(s){
@@ -603,44 +747,59 @@ function renderAsym(st){
     <div class="ptab"><span>BACKTEST TELEMETRY</span>${btVerdict}</div>
     <div class="pbody">${btBody}</div></div>`;
 
-  const p = a.paper;
-  let paperBody;
-  if (!p){
-    paperBody = a.running
-      ? `<div class="cage">BOT STARTING — FIRST CYCLE WILL CREATE THE LEDGER<span class="jp">起動中</span></div>`
-      : `<div class="cage">NOT YET DEPLOYED — LAUNCH PAPER TRIAL:<br>python run.py --config config.asym.json<span class="jp">実戦データなし</span></div>`;
-  } else {
-    const pnlCls = p.total_pnl_sol > 0 ? 'pos' : p.total_pnl_sol < 0 ? 'neg' : '';
-    const openRows = (p.open_rows || []).map(o =>
-      kv('OPEN · ' + esc(o.symbol),
-         `${o.multiple === null ? 'quote…' : o.multiple.toFixed(2) + 'x'} · peak ${o.peak}x · ` +
-         `${o.age_min}m · ${o.spent_sol} SOL`)).join('');
-    const orderRows = (p.orders || []).map(o =>
-      `<tr><td>${esc(String(o.ts || '').slice(5, 16).replace('T', ' '))}</td>
-        <td><span class="${o.side === 'buy' ? 'pos' : 'neg'}">${esc(o.side.toUpperCase())}</span></td>
-        <td>${esc(o.symbol)}</td><td class="num">${o.sol.toFixed(4)}</td>
-        <td>${esc(o.note || '')}</td></tr>`).join('');
-    const balCls = p.balance_sol > p.start_sol ? 'pos' : p.balance_sol < p.start_sol ? 'neg' : '';
-    paperBody =
-      kv('PAPER BALANCE', `<span class="${balCls}" style="font-weight:bold">${p.balance_sol.toFixed(4)}</span> SOL` +
-         ` <span style="color:var(--ink3)">· start ${p.start_sol.toFixed(2)}${p.balance_est ? ' · ~quote pending' : ''}</span>`) +
-      kv('UNITS DEPLOYED', String(p.open)) +
-      kv('SORTIES CLOSED', String(p.count)) +
-      kv('WIN RATE', p.win_rate === null ? '—' : p.win_rate + '%') +
-      kv('AVG MULTIPLE', p.avg_multiple === null ? '—' : p.avg_multiple + 'x') +
-      kv('TOTAL PNL', `<span class="${pnlCls}">${fmtSol(p.total_pnl_sol, true)}</span> SOL`) +
-      openRows +
-      `<div style="margin-top:9px;color:var(--ink3);letter-spacing:2px;font-size:10.5px">PAPER ORDERS — LATEST FILLS</div>
-       <table style="margin-top:4px"><thead><tr><th>TIME</th><th>SIDE</th><th>UNIT</th><th>SOL</th><th>NOTE</th></tr></thead>
-       <tbody>${orderRows || '<tr><td colspan="5" class="empty-row">NO ORDERS YET — SCANNING FOR ENTRIES</td></tr>'}</tbody></table>` +
-      gateTable(st) +
-      kv('NOTE', 'paper forward-test — the number that decides adoption');
-  }
-  const paper = `<div class="panel">
-    <div class="ptab"><span>PAPER TRIAL</span><span class="verdict ${a.running ? 'ok' : (p ? 'warn' : 'warn')}">${a.running ? 'ACTIVE 稼働' + (p ? ' · ' + p.count + ' SORTIES' : '') : (p ? p.count + ' SORTIES' : 'STANDBY 待機')}</span></div>
-    <div class="pbody">${paperBody}</div></div>`;
+  // one PAPER TRIAL panel per live strategy (BASE/BOUNCE/HOLDER); fall back to
+  // the single base block if the server predates the multi-strategy field.
+  const strategies = (st.strategies && st.strategies.length) ? st.strategies
+    : [{key: 'base', label: 'BASE', running: a.running, paper: a.paper, exits: a.exits}];
+  const paperPanel = (s) => {
+    const p = s.paper, running = s.running, ex2 = s.exits || {};
+    const tp0 = ex2.take_profits && ex2.take_profits[0] ? ex2.take_profits[0].multiple : '?';
+    const doc = ex2.stop_loss_pct != null
+      ? `<div style="color:var(--ink3);font-size:10px;letter-spacing:1px;margin-bottom:7px">`
+        + `STOP -${ex2.stop_loss_pct}% · TP ${tp0}x · TRAIL -${ex2.trailing_stop_pct}% · `
+        + `HARD ${ex2.hard_tp_multiple}x · HOLD ${ex2.max_hold_min}m</div>`
+      : '';
+    let body;
+    if (!p){
+      body = running
+        ? `<div class="cage">BOT STARTING — FIRST CYCLE CREATES THE LEDGER<span class="jp">起動中</span></div>`
+        : `<div class="cage">NOT DEPLOYED — run.py --config config.${s.key === 'base' ? 'asym' : s.key}.json<span class="jp">実戦データなし</span></div>`;
+    } else {
+      const pnlCls = p.total_pnl_sol > 0 ? 'pos' : p.total_pnl_sol < 0 ? 'neg' : '';
+      const openRows = (p.open_rows || []).map(o =>
+        kv('OPEN · ' + esc(o.symbol),
+           `${o.multiple === null ? 'quote…' : o.multiple.toFixed(2) + 'x'} · peak ${o.peak}x · ` +
+           `${o.age_min}m · ${o.spent_sol} SOL`)).join('');
+      const orderRows = (p.orders || []).map(o =>
+        `<tr><td>${esc(String(o.ts || '').slice(5, 16).replace('T', ' '))}</td>
+          <td><span class="${o.side === 'buy' ? 'pos' : 'neg'}">${esc(o.side.toUpperCase())}</span></td>
+          <td>${esc(o.symbol)}</td><td class="num">${o.sol.toFixed(4)}</td>
+          <td>${esc(o.note || '')}</td></tr>`).join('');
+      const balCls = p.balance_sol > p.start_sol ? 'pos' : p.balance_sol < p.start_sol ? 'neg' : '';
+      body = doc +
+        kv('PAPER BALANCE', `<span class="${balCls}" style="font-weight:bold">${p.balance_sol.toFixed(4)}</span> SOL` +
+           ` <span style="color:var(--ink3)">· start ${p.start_sol.toFixed(2)}${p.balance_est ? ' · ~quote pending' : ''}</span>`) +
+        kv('UNITS DEPLOYED', String(p.open)) +
+        kv('SORTIES CLOSED', String(p.count)) +
+        kv('WIN RATE', p.win_rate === null ? '—' : p.win_rate + '%') +
+        kv('AVG MULTIPLE', p.avg_multiple === null ? '—' : p.avg_multiple + 'x') +
+        kv('TOTAL PNL', `<span class="${pnlCls}">${fmtSol(p.total_pnl_sol, true)}</span> SOL`) +
+        (p.voided ? kv('VOIDED (RUGS)',
+           `<span class="neg">${p.voided}</span> position${p.voided === 1 ? '' : 's'} · ` +
+           `<span class="neg">−${p.voided_sol.toFixed(4)}</span> SOL sunk ` +
+           `<span style="color:var(--ink3)">· unsellable, excluded from pnl &amp; win rate</span>`) : '') +
+        openRows +
+        `<div style="margin-top:9px;color:var(--ink3);letter-spacing:2px;font-size:10.5px">PAPER ORDERS — LATEST FILLS</div>
+         <table style="margin-top:4px"><thead><tr><th>TIME</th><th>SIDE</th><th>UNIT</th><th>SOL</th><th>NOTE</th></tr></thead>
+         <tbody>${orderRows || '<tr><td colspan="5" class="empty-row">NO ORDERS YET — SCANNING FOR ENTRIES</td></tr>'}</tbody></table>` +
+        gateTable(st, s.label);
+    }
+    return `<div class="panel">
+      <div class="ptab"><span>PAPER TRIAL · ${esc(s.label)} ${stratChip(s.label)}</span><span class="verdict ${running ? 'ok' : 'warn'}">${running ? 'ACTIVE 稼働' : 'STANDBY 待機'}${p ? ' · ' + p.count + ' SORTIES' : ''}</span></div>
+      <div class="pbody">${body}</div></div>`;
+  };
 
-  el.innerHTML = entryPanel + doctrine + backtest + paper;
+  el.innerHTML = entryPanel + doctrine + backtest + strategies.map(paperPanel).join('');
 }
 
 function renderUpdates(st){
@@ -649,25 +808,100 @@ function renderUpdates(st){
     `<tr><td style="white-space:nowrap">${esc(u.ts)}</td><td>${esc(u.title)}</td>
      <td style="color:var(--ink2)">${esc(u.impact)}</td></tr>`).join('') ||
     '<tr><td colspan="3" class="empty-row">NO UPDATES LOGGED</td></tr>';
+  const c = $('upd-count');
+  if (c) c.textContent = rows.length ? `  ·  ${rows.length} ENTRIES` : '';
 }
 
-/* ---- rejection airlock: animate each real reject event exactly once ---- */
-const GATE_LABELS = {setup:'BASE-ENTRY', insiders:'INSIDERS', smart_money:'SMART MONEY',
-                     rugcheck:'RUGCHECK', roundtrip:'ROUNDTRIP', other:'GATE'};
+function renderWallets(st){
+  const w = st.wallets;
+  const badge = $('wallets-badge'), body = $('wallets-body');
+  if (!w){
+    badge.textContent = 'NO DATA'; badge.className = 'verdict warn';
+    body.innerHTML = '<div class="empty-row">HARVESTER OFFLINE OR NO SIGHTINGS YET — WALLETS ACCUMULATE ON EVERY DEEP CHECK</div>';
+    return;
+  }
+  badge.textContent = `${w.wallets} WALLETS · ${w.tokens} TOKENS`;
+  badge.className = 'verdict ok';
+  const top = (w.top || []).map(t =>
+    `<tr><td style="font-family:monospace">${esc(t.wallet.slice(0,4))}…${esc(t.wallet.slice(-4))}` +
+    (t.tracked ? ` <span style="color:var(--amber)">★${esc(t.tracked)}</span>` : '') + `</td>` +
+    `<td>${t.mints}</td><td>${t.sightings}</td>` +
+    `<td style="color:var(--ink3)">${esc((t.symbols || '').split(',').slice(0,4).join(', '))}</td></tr>`).join('');
+  const hits = (w.tracked_hits || []).map(h =>
+    `<tr><td style="white-space:nowrap">${esc((h.ts || '').slice(0,16))}</td><td style="color:var(--amber)">★${esc(h.name || '?')}</td><td>${esc(h.symbol || '?')}</td></tr>`).join('');
+  body.innerHTML =
+    kv('SIGHTINGS LOGGED', String(w.sightings)) +
+    kv('TRACKED WATCHLIST', `${w.tracked_count} wallets · reports/tracked_wallets.json (edit any time, no restart)`) +
+    `<div style="margin-top:9px;color:var(--ink3);letter-spacing:2px;font-size:10.5px">MOST-SEEN WALLETS — BY DISTINCT TOKENS</div>
+     <table style="margin-top:4px"><thead><tr><th>WALLET</th><th>TOKENS</th><th>SEEN</th><th>ON</th></tr></thead>
+     <tbody>${top || '<tr><td colspan="4" class="empty-row">NO SIGHTINGS YET</td></tr>'}</tbody></table>` +
+    (hits ? `<div style="margin-top:9px;color:var(--ink3);letter-spacing:2px;font-size:10.5px">TRACKED-WALLET HITS — LATEST</div>
+     <table style="margin-top:4px"><thead><tr><th>TIME (UTC)</th><th>NAME</th><th>TOKEN</th></tr></thead><tbody>${hits}</tbody></table>` : '') +
+    kv('NOTE', 'observational — annotates ENTER lines, never gates an entry');
+}
+
+/* ---- rejection airlock: animate each real reject event exactly once ----
+   The feed is merged across every live strategy (BASE/BOUNCE/HOLDER/HOMERUN);
+   each gets its own lane + colour, and the ticker below keeps the last events
+   on screen because the animation stage is empty between rejects. */
+const GATE_LABELS = {setup:'BASE-ENTRY', bounce:'BOUNCE-ENTRY', moonshot:'MOONSHOT', screen:'SCREEN',
+                     human:'HUMAN', insiders:'INSIDERS', smart_money:'SMART MONEY', rugcheck:'RUGCHECK',
+                     roundtrip:'ROUNDTRIP', other:'GATE'};
+const REJ_H = 118;
+const stratCls = l => 'sc-' + String(l || 'other').toLowerCase();
+const rejKey = r => r.ts + '|' + r.strategy + '|' + r.symbol + '|' + r.cat;
 const rejSeen = new Set();
-let rejQueue = [], rejPumping = false, rejFirstLoad = true;
+let rejQueue = [], rejPumping = false, rejFirstLoad = true, rejLaneTop = {};
 
 function renderRejFx(st){
-  const rec = (st.rejects && st.rejects.recent) || [];
+  const rj = st.rejects || {};
+  const rec = rj.recent || [];
+  rejRail(rj);
+  rejTicker(rj);
   for (const r of rec){
-    const k = r.ts + '|' + r.symbol + '|' + r.cat;
+    const k = rejKey(r);
     if (rejSeen.has(k)) continue;
     rejSeen.add(k);
     if (!rejFirstLoad) rejQueue.push(r);
   }
-  if (rejFirstLoad){ rejQueue.push(...rec.slice(-2)); rejFirstLoad = false; }
-  rejQueue = rejQueue.slice(-6);
+  if (rejFirstLoad){ rejQueue.push(...rec.slice(-3)); rejFirstLoad = false; }
+  // the dashboard stays open for days — keep the dedup set from growing forever
+  if (rejSeen.size > 4000){ rejSeen.clear(); rec.forEach(r => rejSeen.add(rejKey(r))); }
+  rejQueue = rejQueue.slice(-8);
   rejPump();
+}
+
+/* Left rail: one labelled lane per strategy that is actually rejecting. */
+function rejRail(rj){
+  const rail = $('rejrail'), ss = rj.strategies || [];
+  const sig = ss.map(s => s.label + ':' + s.n).join(',');
+  $('rejempty').style.display = ss.length ? 'none' : '';
+  const badge = $('rejbadge');
+  if (badge) badge.textContent = ss.length ? `${rj.window_n} REJECTS · ${ss.length} STRAT` : '拒否';
+  if (rail.dataset.sig === sig) return;
+  rail.dataset.sig = sig;
+  rejLaneTop = {};
+  rail.innerHTML = ss.map((s, i) => {
+    const top = ss.length < 2 ? (REJ_H - 30) / 2 : 10 + i * (REJ_H - 40) / (ss.length - 1);
+    rejLaneTop[s.label] = top;
+    return `<div class="lane ${stratCls(s.label)}" style="top:${top}px">${esc(s.label)}<i>${s.n} REJ</i></div>`;
+  }).join('');
+}
+
+/* Persistent list of the last merged rejects, newest first. */
+function rejTicker(rj){
+  const el = $('rejtick');
+  const rows = (rj.recent || []).slice().reverse().slice(0, 8);
+  const tally = (rj.strategies || []).map(s =>
+    `<span class="tg ${stratCls(s.label)}">${esc(s.label)} ${s.n}</span>`).join('  ·  ');
+  el.innerHTML =
+    `<div class="hdr"><span>LATEST FILTERED — ALL STRATEGIES</span><span>${tally || '—'}</span></div>` +
+    (rows.map(r =>
+      `<div class="rt"><span class="t">${esc((r.ts || '').slice(11, 19))}</span>
+        <span class="s ${stratCls(r.strategy)}">${esc(r.strategy || '—')}</span>
+        <span class="sym">${esc(r.symbol)}</span>
+        <span class="why" title="${esc(r.reason || '')}"><em>✕ ${esc(GATE_LABELS[r.cat] || 'GATE')}</em> — ${esc(r.reason || '')}</span></div>`
+     ).join('') || '<div class="empty-row">NO REJECTS IN THE CURRENT LOG WINDOW</div>');
 }
 
 function rejPump(){
@@ -685,37 +919,100 @@ function rejSpawn(r){
   const stage = $('rejfx');
   if (!stage) return;
   const el = document.createElement('div');
-  el.className = 'rchip';
-  el.style.setProperty('--d', Math.max(160, stage.clientWidth * 0.58 - 150) + 'px');
-  el.style.top = (8 + Math.random() * 34) + 'px';
-  el.innerHTML = `<b>${esc(r.symbol)}</b><span class="rgate">✕ ${GATE_LABELS[r.cat] || 'GATE'}</span>` +
+  el.className = 'rchip ' + stratCls(r.strategy);
+  const lane = rejLaneTop[r.strategy];
+  el.style.top = (lane === undefined ? 10 + Math.random() * 70 : lane) + 'px';
+  el.innerHTML = `<span class="rstrat">${esc(r.strategy || '?')}</span><b>${esc(r.symbol)}</b>` +
+                 `<span class="rgate">✕ ${GATE_LABELS[r.cat] || 'GATE'}</span>` +
                  `<span class="stamp">REJECTED</span>`;
   stage.appendChild(el);
+  // measure once attached: travel to the gate line, whatever the chip's width
+  el.style.setProperty('--d',
+    Math.max(90, stage.clientWidth * 0.58 - el.offsetLeft - el.offsetWidth - 8) + 'px');
   el.addEventListener('animationend', ev => { if (ev.target === el) el.remove(); });
 }
 
-function gateTable(st){
+/* Gate breakdown. With a strategy label, counts/last are that strategy's own
+   slice of the merged feed; without one, the all-strategy totals. */
+function gateTable(st, strat){
   const rj = st.rejects || {};
-  const cats = [['setup','BASE-ENTRY SETUP'],['insiders','INSIDERS'],['smart_money','SMART MONEY'],
-                ['rugcheck','RUGCHECK'],['roundtrip','ROUNDTRIP COST']]
-    .concat(rj.other ? [['other','OTHER']] : []);
+  const cats = [['setup','BASE-ENTRY SETUP'],['bounce','BOUNCE ENTRY'],['moonshot','MOONSHOT SCREEN'],
+                ['human','HUMAN'],['insiders','INSIDERS'],['smart_money','SMART MONEY'],
+                ['rugcheck','RUGCHECK'],['roundtrip','ROUNDTRIP COST'],['other','OTHER']];
   const rows = cats.map(([k, label]) => {
     const c = rj[k];
-    return `<tr><td>${label}</td><td class="num">${c ? c.n : 0}</td>` +
-      `<td>${c ? esc(c.last_symbol) : '—'}</td>` +
-      `<td style="color:var(--ink3)" title="${c ? esc(c.last_reason) : ''}">${c ? esc(c.last_reason).slice(0, 36) : ''}</td></tr>`;
-  }).join('');
-  return `<div style="margin-top:9px;color:var(--ink3);letter-spacing:2px;font-size:10.5px">REJECTION GATE — LIVE, SINCE TRIAL START</div>
+    const src = !c ? null : strat ? (c.by || {})[strat] : c;
+    return [label, src];
+  }).filter(([, src]) => src && src.n).map(([label, src]) =>
+    `<tr><td>${label}</td><td class="num">${src.n}</td><td>${esc(src.last_symbol)}</td>` +
+    `<td style="color:var(--ink3)" title="${esc(src.last_reason)}">${esc(src.last_reason).slice(0, 36)}</td></tr>`
+  ).join('');
+  return `<div style="margin-top:9px;color:var(--ink3);letter-spacing:2px;font-size:10.5px">REJECTION GATES${strat ? ' — ' + esc(strat) : ''} · RECENT LOG WINDOW</div>
     <table style="margin-top:4px"><thead><tr><th>GATE</th><th>N</th><th>LAST</th><th>REASON</th></tr></thead>
-    <tbody>${rows}</tbody></table>`;
+    <tbody>${rows || '<tr><td colspan="4" class="empty-row">NO REJECTS IN THE CURRENT LOG WINDOW</td></tr>'}</tbody></table>`;
 }
 
-function sortieRow(r){
+function stratChip(key){
+  const k = String(key || 'BASE').toUpperCase();
+  const cls = k.startsWith('BASE') ? 'good' : k.startsWith('H') ? 'info'
+    : k.startsWith('V') ? 'warn' : 'crit';
+  return `<span class="chip ${cls}" style="font-size:9.5px;padding:1px 5px">${esc(k)}</span>`;
+}
+
+function sortieRow(r, strat){
   const cls = r.pnl_sol > 0 ? 'pos' : r.pnl_sol < 0 ? 'neg' : '';
   return `<tr><td>${esc(r.closed_at || '')}</td><td>${esc(r.symbol)}</td>
+    <td>${stratChip(strat || r.strategy)}</td>
     <td class="num">${r.multiple.toFixed(2)}x</td>
     <td class="num"><span class="${cls}">${fmtSol(r.pnl_sol, true)}</span></td>
     <td>${esc(r.reason)}</td></tr>`;
+}
+
+function renderStrategies(st){
+  const el = $('stratlab');
+  const lab = st.strategy_lab;
+  if (!lab || !lab.strategies || !lab.strategies.length){
+    el.innerHTML = `<div class="panel cage">STRATEGY LAB EMPTY — RUN: python freshlab.py --run
+      <span class="jp">戦術評価待機中</span></div>`;
+    return;
+  }
+  const by = {};
+  lab.strategies.forEach(s => by[s.key] = s);
+  const heads = [
+    ['BASE-EA', 'BASE-ENTRY', 'LIVE — the strategy the paper bot trades'],
+    ['V1',      'VOL/MC CHURN', 'RESEARCH — volume > market cap screen'],
+    ['H1-EA',   'HOLDER DIST', 'RESEARCH — distributed-holders gate'],
+  ];
+  const cards = heads.map(([key, name, sub]) => {
+    const s = by[key];
+    const p = s && s.pooled;
+    const cls = !p ? '' : p.avg >= 1 ? 'pos' : 'neg';
+    const chip = key === 'BASE-EA' ? '<span class="chip good">▰ LIVE</span>'
+                                   : '<span class="chip warn">▲ RESEARCH</span>';
+    return `<div class="panel tile"><div class="lbl">${name} ${chip}</div>
+      <div class="big ${cls}">${p ? p.avg.toFixed(2) + 'x' : '—'}</div>
+      <div class="sub">${p ? `wr ${p.wr}% · med ${p.med}x · n=${p.n} (fresh OOT)` : 'no trades'}<br>${sub}</div></div>`;
+  }).join('');
+  const rows = lab.strategies.map(s => {
+    const p = s.pooled, t = s.train, v = s.valid;
+    const cls = p && p.avg >= 1 ? 'pos' : 'neg';
+    return `<tr><td>${stratChip(s.key)}</td><td>${esc(s.label)}</td>
+      <td class="num"><span class="${cls}">${p ? p.avg.toFixed(3) + 'x' : '—'}</span></td>
+      <td class="num">${p ? p.wr.toFixed(0) + '%' : '—'}</td>
+      <td class="num">${p ? p.med.toFixed(2) : '—'}</td>
+      <td class="num">${p ? p.n : 0}</td>
+      <td class="num">${t ? t.avg.toFixed(2) + '/' + t.n : '—'}</td>
+      <td class="num">${v ? v.avg.toFixed(2) + '/' + v.n : '—'}</td></tr>`;
+  }).join('');
+  el.innerHTML = `<div class="tiles" style="margin-bottom:14px">${cards}</div>
+    <div class="panel"><div class="ptab"><span>FRESH OUT-OF-TIME SAMPLE — ENGINE V5, PRE-REGISTERED</span>
+      <span class="verdict warn">${lab.sample ? lab.sample.tokens_with_candles + ' TOKENS' : ''}</span></div>
+    <div class="pbody"><table><thead><tr><th>KEY</th><th>CONFIG</th><th style="text-align:right">AVG</th>
+      <th style="text-align:right">WR</th><th style="text-align:right">MED</th><th style="text-align:right">N</th>
+      <th style="text-align:right">TRAIN</th><th style="text-align:right">VALID</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+      <div style="margin-top:8px;color:var(--ink3);font-size:10.5px;letter-spacing:1px">
+        HONEST FILLS · DEAD-TOKEN REMAINDERS = 0 · 4% COST · SAMPLE NEVER USED FOR TUNING</div></div></div>`;
 }
 
 /* SORTIE LOG view tabs: LIVE PAPER <-> BACKTEST. Explicit pick sticks (and
@@ -731,25 +1028,45 @@ function setSortieTab(t){
 
 function renderSorties(st){
   sortieSt = st;
-  const rows = st.closed.recent;
+  const rows = (st.live_sorties && st.live_sorties.length) ? st.live_sorties
+    : (st.closed && st.closed.recent) || [];
   const bt = st.backtest_sorties || [];
   const view = sortieTab || (rows.length ? 'live' : (bt.length ? 'backtest' : 'live'));
   const tl = $('tab-live'), tb = $('tab-bt');
   if (tl) tl.className = 'verdict stab ' + (view === 'live' ? 'ok' : 'off');
   if (tb) tb.className = 'verdict stab ' + (view === 'backtest' ? 'warn' : 'off');
   if (view === 'live'){
-    $('sorties').innerHTML = rows.length ? rows.map(sortieRow).join('')
-      : `<tr><td colspan="5" class="empty-row">NO COMPLETED SORTIES YET</td></tr>`;
+    $('sorties').innerHTML = rows.length ? rows.map(r => sortieRow(r, r.strategy || 'BASE')).join('')
+      : `<tr><td colspan="6" class="empty-row">NO COMPLETED SORTIES YET</td></tr>`;
   } else {
-    $('sorties').innerHTML = bt.length ? bt.map(sortieRow).join('') +
-      `<tr><td colspan="5" style="color:var(--ink3);font-size:10.5px;padding:7px 8px">
+    $('sorties').innerHTML = bt.length ? bt.map(r => sortieRow(r, r.strategy || 'BASE')).join('') +
+      `<tr><td colspan="6" style="color:var(--ink3);font-size:10.5px;padding:7px 8px">
         ${esc(st.backtest_strategy || 'backtest journal (simulated fills)')} — simulated fills ·
         <a href="/trades" style="color:var(--cyan)">full trade journal →</a></td></tr>`
-      : `<tr><td colspan="5" class="empty-row">NO BACKTEST JOURNAL YET — run: python tradecards.py</td></tr>`;
+      : `<tr><td colspan="6" class="empty-row">NO BACKTEST JOURNAL YET — run: python tradecards.py</td></tr>`;
   }
 }
 $('tab-live').addEventListener('click', () => setSortieTab('live'));
 $('tab-bt').addEventListener('click', () => setSortieTab('backtest'));
+
+/* Collapsible panels: the header bar toggles its own .pbody. These two default
+   collapsed (long, reference-only); the choice sticks across reloads and the 5s
+   refresh via localStorage. Header badges stay visible while collapsed. */
+function wireCollapse(panelId, tabId, key){
+  const p = $(panelId), t = $(tabId);
+  const set = open => {
+    p.classList.toggle('collapsed', !open);
+    t.setAttribute('aria-expanded', open ? 'true' : 'false');
+    try{ localStorage.setItem(key, open ? '1' : '0'); }catch(e){}
+  };
+  set(localStorage.getItem(key) === '1');
+  t.addEventListener('click', () => set(p.classList.contains('collapsed')));
+  t.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); t.click(); }
+  });
+}
+wireCollapse('upd-panel', 'upd-tab', 'updatesOpen');
+wireCollapse('wal-panel', 'wal-tab', 'walletsOpen');
 
 function renderTerm(st){
   const t = $('term');
@@ -767,7 +1084,7 @@ function render(st){
   badge.className = 'badge ' + (live ? 'live' : 'sim');
   badge.textContent = live ? '⚠ COMBAT MODE — LIVE FUNDS' : 'SIMULATION MODE — PAPER';
   $('foot-mode').textContent = live ? '⚠ COMBAT MODE — REAL FUNDS AT RISK' : 'SIMULATION — NO REAL FUNDS AT RISK';
-  renderAlert(st); renderMagi(st); renderUnits(st); renderTiles(st); renderOps(st); renderAsym(st); renderSorties(st); renderTerm(st); renderRejFx(st); renderUpdates(st);
+  renderAlert(st); renderMagi(st); renderUnits(st); renderTiles(st); renderStrategies(st); renderOps(st); renderAsym(st); renderSorties(st); renderTerm(st); renderRejFx(st); renderUpdates(st); renderWallets(st);
 }
 
 async function refresh(){
@@ -782,19 +1099,33 @@ async function refresh(){
 }
 refresh(); setInterval(refresh, 5000);
 
-/* sparkline hover tooltip */
+/* chart hover tooltips (sparkline + candle minichart) */
 const tip = $('tip');
+function showTip(e, html){
+  tip.innerHTML = html;
+  tip.style.left = (e.clientX + 14) + 'px';
+  tip.style.top = (e.clientY - 30) + 'px';
+  tip.style.display = 'block';
+}
 document.addEventListener('mousemove', e => {
+  const cnd = e.target.closest && e.target.closest('svg.candle');
+  if (cnd){
+    const rows = cnd.dataset.c.split(';').map(s => s.split('|').map(Number));
+    const rect = cnd.getBoundingClientRect();
+    const idx = Math.max(0, Math.min(rows.length - 1,
+      Math.floor((e.clientX - rect.left) / rect.width * rows.length)));
+    const r = rows[idx], d = new Date(r[0] * 1000), p2 = n => String(n).padStart(2,'0');
+    showTip(e, `${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())} UTC · C ${fmtPx(r[4])}<br>` +
+      `O ${fmtPx(r[1])} H ${fmtPx(r[2])} L ${fmtPx(r[3])} · VOL $${fmtVol(r[5])}`);
+    return;
+  }
   const svg = e.target.closest && e.target.closest('svg.spark');
   if (!svg){ tip.style.display = 'none'; return; }
   const vals = svg.dataset.vals.split(',').map(Number);
   const rect = svg.getBoundingClientRect();
   const idx = Math.max(0, Math.min(vals.length - 1,
     Math.round((e.clientX - rect.left) / rect.width * (vals.length - 1))));
-  tip.textContent = vals[idx].toFixed(2) + 'x  (t-' + (vals.length - 1 - idx) + ')';
-  tip.style.left = (e.clientX + 14) + 'px';
-  tip.style.top = (e.clientY - 30) + 'px';
-  tip.style.display = 'block';
+  showTip(e, esc(vals[idx].toFixed(2) + 'x  (t-' + (vals.length - 1 - idx) + ')'));
 });
 </script>
 </body>

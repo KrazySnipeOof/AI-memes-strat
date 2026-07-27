@@ -72,7 +72,8 @@ def main() -> None:
     # hide previously-flagged tokens from re-classification. All sample eras
     # are scanned so the purge stays symmetric across them.
     tokens, seen_mints = [], set()
-    for idx in ("bd_tokens.json", "bd_tokens_60d.json", "bd_tokens_oot.json"):
+    for idx in ("bd_tokens.json", "bd_tokens_60d.json", "bd_tokens_oot.json",
+                "bd_tokens_fresh.json"):
         path = os.path.join("reports", idx)
         if not os.path.exists(path):
             continue

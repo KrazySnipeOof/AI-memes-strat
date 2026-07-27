@@ -148,6 +148,25 @@ class Portfolio:
         )
         self.conn.commit()
 
+    def void_position(self, pos: Position, reason: str = "rug_void") -> None:
+        """Mark a rugged/unsellable position VOID: it stays in the ledger (row +
+        its ENTER fill) but status='void' excludes it from open_positions (bot
+        stops retrying) AND closed_positions (excluded from PnL/win-rate/balance/
+        daily-loss). A real-but-unbookable loss is kept as a record, not a
+        stat."""
+        self.conn.execute(
+            "UPDATE positions SET status='void', closed_at=?, exit_reason=? WHERE id=?",
+            (iso_now(), reason, pos.id),
+        )
+        self.conn.commit()
+
+    def voided_positions(self, limit: int = 200) -> List[Position]:
+        rows = self.conn.execute(
+            "SELECT * FROM positions WHERE status='void' AND mode=? ORDER BY closed_at DESC LIMIT ?",
+            (self.mode, limit),
+        ).fetchall()
+        return [_to_position(r) for r in rows]
+
     def set_progress(self, pos: Position, peak: float, stage: int) -> None:
         self.conn.execute(
             "UPDATE positions SET peak_multiple=?, tp_stage=? WHERE id=?", (peak, stage, pos.id)

@@ -1,0 +1,100 @@
+{
+  "strategy": "sniper",
+  "mode": "paper",
+  "paper_starting_balance_sol": 1.0,
+  "db_path": "memebot-sniper.sqlite",
+  "log_path": "memebot-sniper.log",
+  "scan_interval_sec": 45,
+  "position_size_sol": 0.25,
+  "max_positions": 3,
+  "max_entries_per_cycle": 1,
+  "max_deep_checks_per_cycle": 5,
+  "reentry_cooldown_min": 240,
+  "slippage_bps": 500,
+  "paper_fee_lamports": 150000,
+  "api_pause_sec": 0.4,
+  "filters": {
+    "min_liquidity_usd": 3000,
+    "max_liquidity_usd": 500000,
+    "min_age_min": 5,
+    "max_age_min": 40,
+    "max_fdv_to_liquidity": 100,
+    "min_vol_m5_usd": 1500,
+    "min_sells_m5": 1,
+    "max_buy_sell_ratio": 20
+  },
+  "safety": {
+    "require_rugcheck": true,
+    "max_rugcheck_score": 40,
+    "max_roundtrip_loss_pct": 15
+  },
+  "smart_money": {
+    "enabled": true,
+    "shadow": true,
+    "require_data": false,
+    "min_top_traders": 6,
+    "max_top1_volume_share": 45,
+    "min_buy_share": 35,
+    "max_buy_share": 85,
+    "max_bundlers": 3
+  },
+  "insiders": {
+    "enabled": true,
+    "shadow": true,
+    "try_gmgn": true,
+    "require_data": false,
+    "max_insider_pct": 20,
+    "max_sniper_pct": 25,
+    "max_top10_pct": 50,
+    "max_creator_pct": 15,
+    "min_holders": 50
+  },
+  "narrative": {
+    "keywords": [],
+    "require": false
+  },
+  "entry": {
+    "min_chg_m5_pct": -50.0,
+    "max_chg_m5_pct": 500.0,
+    "min_chg_h1_pct": -80.0,
+    "min_buy_sell_edge": 1.0
+  },
+  "exits": {
+    "stop_loss_pct": 40,
+    "take_profits": [
+      {
+        "multiple": 1.5,
+        "sell_fraction_of_remaining": 0.5
+      }
+    ],
+    "trailing_stop_pct": 25,
+    "hard_tp_multiple": 8.0,
+    "max_hold_min": 120
+  },
+  "risk": {
+    "daily_loss_limit_sol": 0.75
+  },
+  "human_filter": {
+    "enabled": true,
+    "shadow": false,
+    "min_class": "ORGANIC"
+  },
+  "entry_screen": {
+    "enabled": true,
+    "family": "sniper",
+    "min_cum_vol_usd": 3000,
+    "min_two_sided": 0.12
+  },
+  "websocket": {
+    "enabled": true,
+    "discovery": true,
+    "apply_setup_filter": false,
+    "backfill_rest": true,
+    "max_backfills_per_cycle": 4,
+    "max_promotions_per_cycle": 10,
+    "max_price_subs": 95,
+    "min_listing_liquidity_usd": 500,
+    "min_cum_vol_usd": 0,
+    "persist_state": true
+  }
+}
