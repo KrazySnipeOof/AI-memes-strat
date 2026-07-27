@@ -19,6 +19,7 @@ Usage: python backtest.py [--max-tokens 60] [--entry-age 20] [--cost-pct 4]
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import statistics
@@ -315,10 +316,20 @@ def fetch_candles(session, token: Token) -> Tuple[Optional[list], int]:
 DEFAULT_SETUP = {
     "base_window_min": 10,      # lookback for the consolidation-range check
     "max_base_range_pct": 25.0, # (high-low) of that window, as % of entry
-    "max_nukes": 1,             # collapse candles allowed over the whole pre-entry life
+    "max_nukes": 1,             # collapse candles allowed inside peak_window_min
     "nuke_body": 0.70,          # close/open at or below this = collapse candle
     "min_frac_of_peak": 0.60,   # entry must be >= this fraction of the credible peak
     "cred_vol_usd": 500.0,      # candle volume needed to count toward the credible peak
+    "peak_window_min": 30,      # P1: bounded lookback for cred_peak AND the nuke
+                                # count. Previously both scanned the token's whole
+                                # pre-entry life, so the gate silently changed
+                                # meaning with age: at the fitted 30m entry age it
+                                # saw ~30 candles, but live entries at 11h fed it
+                                # ~660 - measuring "60% of the 11-hour high" and
+                                # "<=1 collapse in 660 candles" instead of the
+                                # validated rule. 30 reproduces the fitted
+                                # semantics exactly at entry_age 30 and keeps them
+                                # identical at any age.
     "trend_window_min": 15,     # lookback for the not-chasing check
     "trend_lo": 0.90,           # entry / close-15m-ago bounds: below = bleeding,
     "trend_hi": 1.25,           #   above = entering mid-spike
@@ -334,8 +345,13 @@ def entry_setup_ok(pre: list, entry_ts: int, entry: float, setup: dict) -> bool:
         rng = max(c[2] for c in base) - min(c[3] for c in base)
         if 100 * rng / entry > setup["max_base_range_pct"]:
             return False
+    # P1: both of these are bounded to peak_window_min so the gate means the
+    # same thing whether the token is 30 minutes or 20 hours old. Absent a
+    # window key (older callers / tuned setups) fall back to the whole history.
+    pw = setup.get("peak_window_min")
+    scan = [c for c in pre if c[0] > entry_ts - pw * 60] if pw else pre
     cred_peak, nukes = 0.0, 0
-    for _ts, o, h, _l, cl, v in pre:
+    for _ts, o, h, _l, cl, v in scan:
         if v >= setup["cred_vol_usd"] and cl >= 0.5 * h:
             cred_peak = max(cred_peak, min(h, cl * 2))
         if o > 0 and cl / o <= setup["nuke_body"]:
@@ -351,8 +367,155 @@ def entry_setup_ok(pre: list, entry_ts: int, entry: float, setup: dict) -> bool:
     return True
 
 
+# P2: how stops and trailing stops actually fill. The pre-fix engine filled
+# both at exactly their trigger level no matter how far the candle low sat
+# below it, which is free money the market does not offer. Measured against the
+# live paper trial (memebot-asym, 2026-07-23..25): trailing stops filled 15-27%
+# BELOW their trigger (RDLN -27.1%, sharkdog -22.6%, RAKO -15.0%) and stops
+# 1-21% below. use_candle_low captures the gap-through, the slip percentages
+# then cover AMM price impact on the way out.
+#
+# `low_weight` places the fill between the trigger and the candle low:
+#   0.0 = fill at the trigger (optimistic bound, the pre-fix behaviour)
+#   1.0 = fill at the candle low (pessimistic bound - worst tick, every time)
+# Neither bound is the truth. The only live fill data available - the BASE
+# trial's three trailing stops, which came in 15%, 23% and 27% under trigger -
+# sits nearer the pessimistic end, so the default leans that way without
+# assuming the worst tick on every exit.
+FILL_MODEL = {
+    "use_candle_low": True,   # False pins low_weight to 0 (fill at trigger)
+    "low_weight": 0.7,        # how far toward the candle low the fill lands
+    "stop_slip_pct": 5.0,     # extra haircut on stop fills (live median: -4.9%)
+    "trail_slip_pct": 5.0,    # extra haircut on trailing-stop fills
+    # ---- P5: the same realism, applied to the profitable side ----
+    # P2 made stops and trails fill pessimistically toward the candle LOW but
+    # left every profitable exit realizing its price with no liquidity check at
+    # all. That asymmetry is worth multiples, not percent. In the 2026-07-27
+    # search the ten trades carrying the best screen's entire mean included:
+    #   - a 50x hard-take-profit on a candle whose high was 594x entry, whose
+    #     CLOSE was 2.0x entry, and which traded $16 against that token's
+    #     $4,387 median candle;
+    #   - a 36x TIME-STOP on a candle that traded $25;
+    #   - a 22x time-stop on a candle that traded $4.
+    # A $16 print is not an exit. It is one dust buy against a thin pool, and a
+    # 0.25 SOL sale into it would have moved the price most of the way back.
+    #
+    # The rule, applied to EVERY exit and not just take-profits: you may only
+    # realize a price the market actually traded enough volume to support.
+    #
+    #   1. SELLABLE. A candle can absorb the exit if it traded at least
+    #      `tp_min_vol_usd` AND at least `tp_min_vol_frac` of the trailing-20
+    #      median candle volume.
+    #   2. LIQUIDITY CAP. `liq_peak` tracks the highest close-multiple printed
+    #      on a sellable candle so far. No exit realizes more than
+    #      max(`tp_guard_above`, liq_peak). Below the guard multiple nothing is
+    #      capped, which is what keeps the live calibration (whose 20 closed
+    #      positions contain no >=2x exit) untouched.
+    #   3. WICK. A take-profit fills `high_weight` of the way back from its
+    #      trigger toward the candle close, mirroring `low_weight`, plus slip.
+    #      The exact top tick is no more available to a market order than the
+    #      exact bottom tick is.
+    #
+    # All three are causal: they read only candles up to and including the one
+    # the exit happens on. A blocked take-profit rung does not advance the
+    # ladder - nothing was sold, so it is retried on the next candle.
+    "guard_tp_prints": True,
+    "tp_guard_above": 2.0,    # below this multiple the guards do not apply
+    "tp_min_vol_usd": 200.0,  # ~4x a 0.25 SOL (~$50) exit, so <=25% of the flow
+    "tp_min_vol_frac": 0.25,  # vs the trailing-20 median candle volume
+    "high_weight": 0.5,       # how far back toward the close the TP fill lands
+    "tp_slip_pct": 3.0,       # extra haircut on take-profit fills
+}
+
+
+def fill_at(trigger: float, low: float, fill: dict) -> float:
+    """Blend the trigger and the candle low per the fill model."""
+    if not fill.get("use_candle_low", True) or low >= trigger:
+        return trigger
+    w = fill.get("low_weight", 1.0)
+    return trigger + (low - trigger) * w
+
+
+def tp_sellable(vol: float, med_vol: float, fill: dict) -> bool:
+    """Could a real exit have been sold into this candle? (P5 volume gate)"""
+    if not fill.get("guard_tp_prints", True):
+        return True
+    return (vol >= fill.get("tp_min_vol_usd", 0.0)
+            and vol >= fill.get("tp_min_vol_frac", 0.0) * med_vol)
+
+
+def tp_fill_at(trigger: float, close_m: float, fill: dict) -> float:
+    """Where a take-profit actually fills: `high_weight` of the way back from
+    the trigger toward the candle close, then slip. Mirror of `fill_at`."""
+    if not fill.get("guard_tp_prints", True) or close_m >= trigger:
+        got = trigger
+    else:
+        got = trigger + (close_m - trigger) * fill.get("high_weight", 0.0)
+    return got * (1 - fill.get("tp_slip_pct", 0.0) / 100)
+
+# P0: what to do when a token's candle history ends before the position reaches
+# a real exit. The pre-fix engine marked the position closed at the last
+# available candle and called it a trade ("data_end"). That was 73.6% of the
+# 318-trade sample at a 0.99h median hold against an 8h max_hold - it froze
+# three quarters of the book at the one-hour mark, before the losses that
+# arrive later could land, and scored the result 87.2% WR / 1.425x.
+#
+#   loss - candles stop because the token stopped trading. An unsellable bag is
+#          a total loss on the un-banked remainder. This is the default: it is
+#          both the realistic reading for memecoins and the conservative one.
+#   drop - exclude the trade from the sample. Honest about not knowing, but
+#          biased toward tokens the data provider kept covering (survivors).
+#   last - the old behaviour, retained only so the bias can be measured.
+#   stop - the bot keeps polling a live AMM quote after the candles stop, so its
+#          stop-loss / time-exit still fires. Candles vanish when nobody TRADES;
+#          the pool still holds reserves and still quotes. Calibrated against
+#          the paper trial: 19 closed positions, ZERO quote failures, worst
+#          outcome 0.375, nothing under 0.10 - against which "loss" (63% of
+#          trades to 0.0) is plainly too harsh and "last" too generous.
+COVERAGE_POLICIES = ("stop", "loss", "drop", "last")
+DEFAULT_COVERAGE = "stop"
+
+# What fraction of censored positions are genuine rugs - liquidity pulled, no
+# quote at any price, a real 0.0 - rather than merely illiquid. Observed live:
+# 2 in 20 positions, hence 10%. HAPPYCAT took out both the BASE and HOLDER
+# books at 21 consecutive failed sell quotes each.
+#
+# Rugged positions are stored with status='void', NOT 'closed', and the
+# dashboard excludes them from PnL. Query only 'closed' and every total loss
+# vanishes - which is exactly how an earlier pass here concluded "zero rugs in
+# 19 trades" and set this to 5%. Any query that scores live performance must
+# include 'void'.
+#
+# Assignment is a deterministic hash of the token's own timestamps: reproducible
+# across runs, and it preserves the variance a flat expected-value haircut would
+# flatten out.
+#
+# `dark_slip_pct` is the extra haircut for exiting a pool that has stopped
+# trading but has NOT rugged. It cannot be measured from the paper record - no
+# live position has yet exited that way - so it is an explicit assumption and
+# the largest remaining source of uncertainty: sweeping it across a plausible
+# range moves BASE's average by ~0.3x. 45% is where the model's median matches
+# the live median. Resolving it needs real dark exits, not more backtesting.
+CENSOR_MODEL = {"rug_pct": 10.0, "dark_slip_pct": 45.0}
+# 45% is where the model's median trade matches the live median exactly (0.599)
+# while keeping near-zero total losses, as observed. That is a fit to 13 closed
+# BASE trades - weak evidence, and it should be re-checked as the record grows.
+# live_calibrate.py re-runs the comparison; the sensitivity is roughly 0.03x of
+# average per 10 points of dark slip.
+
+
+def _is_rug(created_ts: int, entry_ts: float, rug_pct: float) -> bool:
+    """Stable per-token draw - no RNG, so a rerun reproduces the same book."""
+    if rug_pct <= 0:
+        return False
+    h = hashlib.sha1(f"{int(created_ts)}:{int(entry_ts)}".encode()).hexdigest()
+    return (int(h[:8], 16) % 10000) < rug_pct * 100
+
+
 def simulate(candles: list, exits: dict, entry_age_min: float, cost_pct: float,
-             min_entry_vol: float, setup: Optional[dict] = None) -> Optional[dict]:
+             min_entry_vol: float, setup: Optional[dict] = None,
+             fill: Optional[dict] = None, coverage: str = DEFAULT_COVERAGE,
+             censor: Optional[dict] = None) -> Optional[dict]:
     """Run the exit state machine over one token's candles.
 
     Conservative candle-ambiguity rule: stops/trailing are checked against the
@@ -361,7 +524,16 @@ def simulate(candles: list, exits: dict, entry_age_min: float, cost_pct: float,
 
     `setup` (e.g. DEFAULT_SETUP) additionally requires the base-entry pattern
     at entry time; None keeps the unconditional age/volume entry.
+
+    `fill` (see FILL_MODEL) sets how stops/trails fill; `coverage` (see
+    COVERAGE_POLICIES) sets what happens when the candles run out before a real
+    exit fires. Returns None for "drop"; otherwise the result carries
+    `censored=True` so callers can count what the policy absorbed.
     """
+    fill = FILL_MODEL if fill is None else fill
+    censor = CENSOR_MODEL if censor is None else censor
+    stop_slip = 1 - fill.get("stop_slip_pct", 0.0) / 100
+    trail_slip = 1 - fill.get("trail_slip_pct", 0.0) / 100
     created = candles[0][0]
     entry_ts = created + entry_age_min * 60
     pre = [c for c in candles if c[0] <= entry_ts]
@@ -385,47 +557,114 @@ def simulate(candles: list, exits: dict, entry_age_min: float, cost_pct: float,
     reason = "data_end"
     events = []
     end_ts = post[-1][0]
+    # causal volume history for the P5 print guard: pre-entry candles seed it,
+    # each post candle appends its own volume BEFORE that candle's exits are
+    # tested, so the guard never reads a volume it could not have seen yet.
+    vol_hist = [c[5] for c in pre]
+    guard_above = fill.get("tp_guard_above", 2.0)
+    guarding = fill.get("guard_tp_prints", True)
+    min_vol_usd = fill.get("tp_min_vol_usd", 0.0)
+    min_vol_frac = fill.get("tp_min_vol_frac", 0.0)
+    liq_peak = 1.0            # highest close-multiple proven by real volume
+    cap = guard_above if guarding else float("inf")
     for ts, _o, h, l, cl, _v in post:
         age = (ts - entry_ts) / 60
+        vol_hist.append(_v)
+        if guarding:
+            # the absolute floor rejects most candles outright on a dying
+            # token, so the trailing-median sort is only paid for when the
+            # candle is a real candidate
+            if _v < min_vol_usd:
+                _sellable = False
+            else:
+                tail = sorted(vol_hist[-20:])
+                _sellable = _v >= min_vol_frac * tail[len(tail) // 2]
+            if _sellable:
+                liq_peak = max(liq_peak, cl / entry)
+                cap = max(guard_above, liq_peak)
+        else:
+            _sellable = True
         lo_m, hi_m, cl_m = l / entry, h / entry, cl / entry
         if stage == 0 and lo_m <= stop_mult:
-            events.append({"ts": ts, "kind": "STOP", "portion": remaining, "mult": stop_mult})
-            received += remaining * stop_mult
+            got = fill_at(stop_mult, lo_m, fill) * stop_slip
+            events.append({"ts": ts, "kind": "STOP", "portion": remaining, "mult": got})
+            received += remaining * got
             remaining, reason, end_ts = 0.0, "stop_loss", ts
             break
         if stage > 0 and lo_m <= peak * (1 - trail / 100):
             level = peak * (1 - trail / 100)
-            events.append({"ts": ts, "kind": "TRAIL", "portion": remaining, "mult": level})
-            received += remaining * level
+            got = min(fill_at(level, lo_m, fill) * trail_slip, cap)
+            events.append({"ts": ts, "kind": "TRAIL", "portion": remaining, "mult": got})
+            received += remaining * got
             remaining, reason, end_ts = 0.0, "trailing_stop", ts
             break
+        # P5: a take-profit above the guard level only fills if the candle it
+        # triggers on could actually have absorbed the sale, and then it fills
+        # back toward that candle's close rather than at its top tick. Blocked
+        # rungs do NOT advance `stage` - nothing was sold, so the position is
+        # unchanged and the same rung is retried on the next candle.
         while stage < len(tps) and hi_m >= float(tps[stage]["multiple"]):
+            lvl = float(tps[stage]["multiple"])
+            if lvl >= guard_above:
+                if not _sellable:
+                    break
+                got = min(tp_fill_at(lvl, cl_m, fill), cap)
+            else:
+                got = lvl
             frac = float(tps[stage]["sell_fraction_of_remaining"])
             if frac > 0:
-                events.append({"ts": ts, "kind": f"TP{stage + 1}", "portion": remaining * frac,
-                               "mult": float(tps[stage]["multiple"])})
-            received += remaining * frac * float(tps[stage]["multiple"])
+                events.append({"ts": ts, "kind": f"TP{stage + 1}",
+                               "portion": remaining * frac, "mult": got})
+            received += remaining * frac * got
             remaining *= 1 - frac
             stage += 1
         if remaining <= 1e-12:
             reason, end_ts = "take_profit", ts
             break
-        if hi_m >= hard:
-            events.append({"ts": ts, "kind": "HARD-TP", "portion": remaining, "mult": hard})
-            received += remaining * hard
+        if hi_m >= hard and (_sellable or hard < guard_above):
+            got = min(tp_fill_at(hard, cl_m, fill) if hard >= guard_above else hard, cap)
+            events.append({"ts": ts, "kind": "HARD-TP", "portion": remaining,
+                           "mult": got})
+            received += remaining * got
             remaining, reason, end_ts = 0.0, "hard_take_profit", ts
             break
         peak = max(peak, hi_m)
         if age >= max_hold:
-            events.append({"ts": ts, "kind": "TIME", "portion": remaining, "mult": cl_m})
-            received += remaining * cl_m
+            got = min(cl_m, cap)
+            events.append({"ts": ts, "kind": "TIME", "portion": remaining, "mult": got})
+            received += remaining * got
             remaining, reason, end_ts = 0.0, "time_stop", ts
             break
-    if remaining > 1e-12:
-        cl_m = post[-1][4] / entry
-        events.append({"ts": post[-1][0], "kind": "END", "portion": remaining, "mult": cl_m})
-        received += remaining * cl_m
-    return {"multiple": received * (1 - cost_pct / 100), "reason": reason,
+    # P0: falling out of the loop with stock still held means the candles ran
+    # out before max_hold elapsed - the exit machine never got to finish. That
+    # is censored data, not a trade outcome.
+    censored = remaining > 1e-12
+    if censored:
+        if coverage == "drop":
+            return None
+        if coverage == "last":
+            cl_m = min(post[-1][4] / entry, cap)
+            events.append({"ts": post[-1][0], "kind": "END", "portion": remaining, "mult": cl_m})
+            received += remaining * cl_m
+        elif coverage == "stop":
+            # the bot is still polling a live quote: its stop/time-exit fires
+            # against the pool even though nobody else is trading
+            if _is_rug(candles[0][0], entry_ts, censor.get("rug_pct", 0.0)):
+                events.append({"ts": post[-1][0], "kind": "RUG", "portion": remaining, "mult": 0.0})
+                reason = "rugged"
+            else:
+                cl_m = post[-1][4] / entry
+                got = (min(cl_m, stop_mult) * stop_slip
+                       * (1 - censor.get("dark_slip_pct", 0.0) / 100))
+                events.append({"ts": post[-1][0], "kind": "DARK-STOP",
+                               "portion": remaining, "mult": got})
+                received += remaining * got
+                reason = "dark_stop"
+        else:  # "loss" - the token stopped trading; the remainder is unsellable
+            events.append({"ts": post[-1][0], "kind": "DEAD", "portion": remaining, "mult": 0.0})
+            reason = "no_coverage"
+        end_ts = post[-1][0]
+    return {"multiple": received * (1 - cost_pct / 100), "reason": reason, "censored": censored,
             "entry_ts": entry_ts, "entry_price": entry, "events": events, "end_ts": end_ts}
 
 
@@ -487,7 +726,31 @@ def main() -> None:
     ap.add_argument("--cache-dir", default="", help="candle cache dir (default .ohlcv_cache)")
     ap.add_argument("--no-setup-filter", action="store_true",
                     help="disable the base-entry setup filter and take every age/volume entry")
+    ap.add_argument("--coverage", default=DEFAULT_COVERAGE, choices=COVERAGE_POLICIES,
+                    help="what to do when candles run out before a real exit fires: "
+                         "loss (default, unsellable bag), drop (exclude, survivor-biased), "
+                         "last (pre-fix behaviour - mark at last price; inflates results)")
+    ap.add_argument("--stop-slip", type=float, default=FILL_MODEL["stop_slip_pct"],
+                    help="extra haircut %% on stop fills (default %(default)s)")
+    ap.add_argument("--trail-slip", type=float, default=FILL_MODEL["trail_slip_pct"],
+                    help="extra haircut %% on trailing-stop fills (default %(default)s)")
+    ap.add_argument("--dark-slip", type=float, default=CENSOR_MODEL["dark_slip_pct"],
+                    help="extra %% haircut exiting a pool that stopped trading, under "
+                         "--coverage stop. UNCALIBRATED - live has had no dark exits "
+                         "(default %(default)s)")
+    ap.add_argument("--rug-pct", type=float, default=CENSOR_MODEL["rug_pct"],
+                    help="%% of censored positions treated as real rugs (0.0) under "
+                         "--coverage stop; the rest exit at the stop (default %(default)s)")
+    ap.add_argument("--low-weight", type=float, default=FILL_MODEL["low_weight"],
+                    help="how far from trigger toward the candle low stops/trails fill: "
+                         "0=trigger (optimistic), 1=candle low (pessimistic) (default %(default)s)")
+    ap.add_argument("--fill-at-trigger", action="store_true",
+                    help="pre-fix fill model: fill stops/trails at their trigger level even when "
+                         "the candle gapped straight through it")
     args = ap.parse_args()
+    fill = {"use_candle_low": not args.fill_at_trigger, "low_weight": args.low_weight,
+            "stop_slip_pct": args.stop_slip, "trail_slip_pct": args.trail_slip}
+    censor = {"rug_pct": args.rug_pct, "dark_slip_pct": args.dark_slip}
 
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
     cfg = Config.load(args.config)
@@ -549,6 +812,15 @@ def main() -> None:
               f"{setup['trend_lo']:.2f}-{setup['trend_hi']:.2f}x")
     else:
         print("base-entry setup filter OFF (--no-setup-filter)")
+    if setup and setup.get("peak_window_min"):
+        print(f"  peak/nuke lookback bounded to {setup['peak_window_min']}m (age-invariant gate)")
+    print(f"coverage policy: {args.coverage}"
+          + (f" (rug {args.rug_pct:.1f}%, dark slip {args.dark_slip:.1f}%)"
+             if args.coverage == "stop" else "")
+          + ("  [WARNING: 'last' is the pre-fix behaviour and inflates results]"
+             if args.coverage == "last" else ""))
+    print(f"fill model: stops/trails {(str(int(100 * fill['low_weight'])) + '% toward candle low') if fill['use_candle_low'] else 'at trigger'}"
+          f" · stop slip {fill['stop_slip_pct']:.1f}% · trail slip {fill['trail_slip_pct']:.1f}%")
 
     def gt_progress(phase: str, done: int, cached: int, no_data: int):
         """Status file the NERV dashboard polls to draw its progress bar."""
@@ -563,6 +835,7 @@ def main() -> None:
 
     results = {name: [] for name, _ in variants}
     details = {name: [] for name, _ in variants}
+    censored = {name: 0 for name, _ in variants}
     skipped = 0
     for i, tok in enumerate(tokens, 1):
         if args.tokens_json:
@@ -574,9 +847,11 @@ def main() -> None:
             continue
         entered = False
         for name, exits in variants:
-            sim = simulate(candles, exits, args.entry_age, args.cost_pct, args.min_entry_vol, setup=setup)
+            sim = simulate(candles, exits, args.entry_age, args.cost_pct, args.min_entry_vol,
+                           setup=setup, fill=fill, coverage=args.coverage, censor=censor)
             if sim:
                 entered = True
+                censored[name] += bool(sim.get("censored"))
                 results[name].append(Trade(tok.symbol, tok.cohort, sim["multiple"], sim["reason"]))
                 if not args.no_report:
                     details[name].append({"token": tok, "candles": candles, "sim": sim,
@@ -592,6 +867,12 @@ def main() -> None:
     nar_keys = [k.strip().lower() for k in args.narrative.split(",") if k.strip()]
     for name, _ in variants:
         summarize(name, results[name])
+        n, cen = len(results[name]), censored[name]
+        if n:
+            # Loud, because this number is the whole reason the pre-fix engine
+            # read 1.605x on a strategy the fresh sample scored at 0.226x.
+            print(f"  censored (candles ended before a real exit): {cen}/{n} "
+                  f"({100 * cen / n:.1f}%) - policy '{args.coverage}'")
         if nar_keys:
             subset = [t for t in results[name] if any(k in t.symbol.lower() for k in nar_keys)]
             summarize(name + " -- NARRATIVE SUBSET", subset)
@@ -603,7 +884,9 @@ def main() -> None:
                    "max_tokens": args.max_tokens, "entry_age_min": args.entry_age,
                    "cost_pct": args.cost_pct, "cohorts": counts,
                    "tokens_processed": len(tokens) - skipped, "no_history": skipped,
-                   "setup_filter": setup},
+                   "setup_filter": setup,
+                   "coverage_policy": args.coverage, "fill_model": fill,
+                   "censor_model": censor},
         "variants": [],
     }
     for name, exits in variants:
@@ -614,7 +897,7 @@ def main() -> None:
             if cs:
                 cohorts[cohort] = cs
         summary["variants"].append({
-            "name": name, "exits": exits,
+            "name": name, "exits": exits, "censored": censored[name],
             "overall": stats_dict([t.multiple for t in trades]),
             "fair": stats_dict([t.multiple for t in trades if t.cohort in ("db", "pump", "new")]),
             "cohorts": cohorts,
@@ -634,8 +917,10 @@ def main() -> None:
 CAVEATS - read before believing any number above:
  * Trending cohort is survivor-biased: those tokens are on the leaderboard
    BECAUSE they pumped. Their stats are an upper bound, not an expectation.
- * Fills are assumed exactly at trigger prices; live fills are worse (latency,
-   slippage beyond the haircut, failed transactions, MEV).
+ * Fills are modelled, not assumed perfect: stops/trails land partway toward the
+   candle low (P2) and profitable exits are capped at a price the candle had the
+   volume to support (P5). Live is still worse - latency, failed transactions,
+   MEV and slot contention are none of them in here.
  * Entry filters are approximated by age + early volume only - the live bot's
    liquidity/rugcheck/insider screens can't be reconstructed historically here.
  * Candle-level simulation: intra-candle ordering of stop vs target is assumed

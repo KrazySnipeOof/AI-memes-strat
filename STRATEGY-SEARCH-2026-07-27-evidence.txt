@@ -1,0 +1,121 @@
+train/holdout boundary (median listing time of the universe): 2026-07-20 05:31 UTC
+
+================================================================================================
+qvwap: trading under its volume-weighted average price - everyone who bought the first three minutes is under water
+  entry age 3m   screen: vwap_ratio<0.8 & peak_age_frac>=0.6666666666666666
+  exits: {'stop_loss_pct': 60, 'take_profits': [{'multiple': 10.0, 'sell_fraction_of_remaining': 0.5}], 'hard_tp_multiple': 50.0, 'trailing_stop_pct': 20, 'max_hold_min': 10}  ->  {"stop_loss_pct": 60, "take_profits": [{"multiple": 10.0, "sell_fraction_of_remaining": 0.5}], "hard_tp_multiple": 50.0, "trailing_stop_pct": 20, "max_hold_min": 10}
+  FULL SAMPLE            n=  126  mean  2.384  med  0.982  WR  46.8%  trim5  1.557  P(profit) 100.0%
+  train (older half)     n=   62  mean  2.466  med  0.955  WR  50.0%  trim5  1.471  P(profit) 100.0%
+  holdout (newer half)   n=   64  mean  2.305  med  0.982  WR  43.8%  trim5  1.640  P(profit) 100.0%
+  chronological fifths:
+    block 1              n=   25  mean  1.316  med  0.908  WR  48.0%  trim5  1.109  P(profit)  98.8%
+    block 2              n=   25  mean  2.750  med  0.830  WR  48.0%  trim5  1.702  P(profit) 100.0%
+    block 3              n=   25  mean  3.400  med  1.035  WR  52.0%  trim5  2.378  P(profit) 100.0%
+    block 4              n=   25  mean  2.009  med  1.000  WR  48.0%  trim5  1.725  P(profit) 100.0%
+    block 5              n=   26  mean  2.444  med  0.979  WR  38.5%  trim5  1.425  P(profit) 100.0%
+  MONTE CARLO (10,000 paths x 100 trades, 0.25 SOL from 5.00):
+  scenario            P(profit)  median final       p5       p95  maxDD p50   bust
+  iid                    100.0%        38.54    21.94     59.66      10.9%      0
+  block10                100.0%        39.24    22.01     57.96      11.6%      0
+  stress +5% cost        100.0%        35.61    19.85     55.67      11.8%      0
+  frac 5% sizing         100.0%       770.48    68.32  13473.47      23.3%      0
+  no_top (top 5% cut)      99.9%        18.74    11.17     27.06      15.5%      1
+  engine-assumption sensitivity (mean / P(profit)):
+    shipped defaults                 mean  2.384  P(profit) 100.0%
+    dark slip 30% (live best fit)    mean  2.389  P(profit) 100.0%
+    dark slip 60% (harsher)          mean  2.380  P(profit) 100.0%
+    rug 20% (2x observed)            mean  2.380  P(profit) 100.0%
+    fills at candle low (worst)      mean  2.301  P(profit) 100.0%
+    P5 guard: vol floor $500         mean  2.384  P(profit) 100.0%
+    P5 guard: fill at close          mean  2.381  P(profit) 100.0%
+    P5 guard OFF (pre-fix)           mean  2.399  P(profit) 100.0%
+    cost 6% not 4%                   mean  2.335  P(profit) 100.0%
+  entry-age sensitivity (the same screen, entered later):
+    entry at  3m: n= 126  mean  2.384  P(profit) 100.0%
+    entry at  4m: n=  96  mean  2.069  P(profit) 100.0%
+    entry at  5m: n=  89  mean  1.704  P(profit)  99.9%   <-- below 2.0x
+    entry at  7m: n= 127  mean  1.748  P(profit)  99.7%   <-- below 2.0x
+    entry at 10m: n= 119  mean  1.062  P(profit)  65.0%   <-- below 2.0x
+    entry at 15m: n= 109  mean  1.263  P(profit)  92.8%   <-- below 2.0x
+
+================================================================================================
+qdip: a big green candle has printed and price has since fallen to under 45% of its own high - buy the giveback, not the spike
+  entry age 3m   screen: frac_of_peak<0.45 & best_body>=1.546375842675467
+  exits: {'stop_loss_pct': 60, 'take_profits': [{'multiple': 10.0, 'sell_fraction_of_remaining': 0.5}], 'hard_tp_multiple': 50.0, 'trailing_stop_pct': 20, 'max_hold_min': 10}  ->  {"stop_loss_pct": 60, "take_profits": [{"multiple": 10.0, "sell_fraction_of_remaining": 0.5}], "hard_tp_multiple": 50.0, "trailing_stop_pct": 20, "max_hold_min": 10}
+  FULL SAMPLE            n=  107  mean  2.410  med  0.801  WR  43.0%  trim5  1.502  P(profit) 100.0%
+  train (older half)     n=   61  mean  2.493  med  0.801  WR  41.0%  trim5  1.473  P(profit) 100.0%
+  holdout (newer half)   n=   46  mean  2.300  med  0.767  WR  45.7%  trim5  1.540  P(profit) 100.0%
+  chronological fifths:
+    block 1              n=   22  mean  1.522  med  0.784  WR  27.3%  trim5  1.167  P(profit)  99.4%
+    block 2              n=   21  mean  2.190  med  1.340  WR  52.4%  trim5  1.760  P(profit) 100.0%
+    block 3              n=   21  mean  3.955  med  0.457  WR  42.9%  trim5  2.756  P(profit) 100.0%
+    block 4              n=   21  mean  1.807  med  1.146  WR  52.4%  trim5  1.423  P(profit) 100.0%
+    block 5              n=   22  mean  2.608  med  0.344  WR  40.9%  trim5  1.402  P(profit) 100.0%
+  MONTE CARLO (10,000 paths x 100 trades, 0.25 SOL from 5.00):
+  scenario            P(profit)  median final       p5       p95  maxDD p50   bust
+  iid                    100.0%        39.60    21.19     62.41      13.0%      0
+  block10                 99.7%        40.20    20.39     60.34      18.4%     17
+  stress +5% cost        100.0%        36.62    19.13     58.29      14.2%      1
+  frac 5% sizing         100.0%       697.61    50.19  15661.24      27.7%      0
+  no_top (top 5% cut)      99.3%        17.28     8.94     26.70      19.9%      7
+  engine-assumption sensitivity (mean / P(profit)):
+    shipped defaults                 mean  2.410  P(profit) 100.0%
+    dark slip 30% (live best fit)    mean  2.414  P(profit) 100.0%
+    dark slip 60% (harsher)          mean  2.406  P(profit) 100.0%
+    rug 20% (2x observed)            mean  2.410  P(profit) 100.0%
+    fills at candle low (worst)      mean  2.273  P(profit) 100.0%
+    P5 guard: vol floor $500         mean  2.410  P(profit) 100.0%
+    P5 guard: fill at close          mean  2.393  P(profit) 100.0%
+    P5 guard OFF (pre-fix)           mean  2.933  P(profit) 100.0%
+    cost 6% not 4%                   mean  2.360  P(profit) 100.0%
+  entry-age sensitivity (the same screen, entered later):
+    entry at  3m: n= 107  mean  2.410  P(profit) 100.0%
+    entry at  4m: n= 141  mean  1.706  P(profit) 100.0%   <-- below 2.0x
+    entry at  5m: n= 185  mean  1.314  P(profit)  92.4%   <-- below 2.0x
+    entry at  7m: n= 242  mean  1.267  P(profit)  89.0%   <-- below 2.0x
+    entry at 10m: n= 237  mean  1.067  P(profit)  63.6%   <-- below 2.0x
+    entry at 15m: n= 223  mean  1.308  P(profit)  97.6%   <-- below 2.0x
+
+================================================================================================
+qsurge: volume is accelerating into the entry, price is off its VWAP but well up off the floor - flow arriving on a base
+  entry age 3m   screen: vol_accel>=1 & vwap_ratio<0.8988355094718489 & x_from_low>=1.6707111705762403
+  exits: {'stop_loss_pct': 60, 'take_profits': [{'multiple': 10.0, 'sell_fraction_of_remaining': 0.5}], 'hard_tp_multiple': 50.0, 'trailing_stop_pct': 50, 'max_hold_min': 5}  ->  {"stop_loss_pct": 60, "take_profits": [{"multiple": 10.0, "sell_fraction_of_remaining": 0.5}], "hard_tp_multiple": 50.0, "trailing_stop_pct": 50, "max_hold_min": 5}
+  FULL SAMPLE            n=  107  mean  2.174  med  1.006  WR  51.4%  trim5  1.380  P(profit) 100.0%
+  train (older half)     n=   62  mean  2.125  med  0.962  WR  48.4%  trim5  1.312  P(profit) 100.0%
+  holdout (newer half)   n=   45  mean  2.241  med  1.153  WR  55.6%  trim5  1.474  P(profit) 100.0%
+  chronological fifths:
+    block 1              n=   22  mean  2.033  med  1.033  WR  50.0%  trim5  1.480  P(profit) 100.0%
+    block 2              n=   21  mean  1.622  med  0.357  WR  38.1%  trim5  1.064  P(profit)  98.9%
+    block 3              n=   21  mean  2.569  med  1.143  WR  52.4%  trim5  1.300  P(profit) 100.0%
+    block 4              n=   21  mean  2.002  med  1.154  WR  66.7%  trim5  1.625  P(profit) 100.0%
+    block 5              n=   22  mean  2.630  med  0.998  WR  50.0%  trim5  1.425  P(profit) 100.0%
+  MONTE CARLO (10,000 paths x 100 trades, 0.25 SOL from 5.00):
+  scenario            P(profit)  median final       p5       p95  maxDD p50   bust
+  iid                    100.0%        33.60    18.42     52.94      10.6%      0
+  block10                100.0%        34.09    21.18     48.46       8.8%      0
+  stress +5% cost        100.0%        30.92    16.50     49.29      11.6%      0
+  frac 5% sizing         100.0%       360.97    40.47   5352.63      21.6%      0
+  no_top (top 5% cut)      99.7%        14.38     8.61     20.68      15.9%      0
+  engine-assumption sensitivity (mean / P(profit)):
+    shipped defaults                 mean  2.174  P(profit) 100.0%
+    dark slip 30% (live best fit)    mean  2.175  P(profit) 100.0%
+    dark slip 60% (harsher)          mean  2.174  P(profit) 100.0%
+    rug 20% (2x observed)            mean  2.172  P(profit) 100.0%
+    fills at candle low (worst)      mean  2.116  P(profit) 100.0%
+    P5 guard: vol floor $500         mean  2.174  P(profit) 100.0%
+    P5 guard: fill at close          mean  2.155  P(profit) 100.0%
+    P5 guard OFF (pre-fix)           mean  2.636  P(profit) 100.0%
+    cost 6% not 4%                   mean  2.129  P(profit) 100.0%
+  entry-age sensitivity (the same screen, entered later):
+    entry at  3m: n= 107  mean  2.174  P(profit) 100.0%
+    entry at  4m: n= 120  mean  1.771  P(profit) 100.0%   <-- below 2.0x
+    entry at  5m: n= 106  mean  1.099  P(profit)  73.7%   <-- below 2.0x
+    entry at  7m: n= 102  mean  1.852  P(profit)  99.9%   <-- below 2.0x
+    entry at 10m: n=  89  mean  1.026  P(profit)  57.6%   <-- below 2.0x
+    entry at 15m: n=  99  mean  1.277  P(profit) 100.0%   <-- below 2.0x
+
+================================================================================================
+DISTINCTNESS - Jaccard overlap of the actual traded token sets
+  qvwap          vs qdip            shared   48 / union  185  = 0.26
+  qvwap          vs qsurge          shared   34 / union  199  = 0.17
+  qdip           vs qsurge          shared   45 / union  169  = 0.27

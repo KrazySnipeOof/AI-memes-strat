@@ -58,6 +58,21 @@ _DIR = os.path.dirname(os.path.abspath(__file__))
 USAGE_PATH = os.path.join(_DIR, "reports", "bd_usage.json")
 BASELINE_PATH = os.path.join(_DIR, "reports", "bd_usage_baseline.json")
 
+
+def set_data_dir(path: str) -> None:
+    """Point the ledger at another checkout's reports/ directory.
+
+    One Birdeye account bills one CU pool, so every process that spends CUs
+    has to write into the same ledger or the dashboard under-reports. A runner
+    started with `run.py --workdir <other checkout>` calls this so its usage
+    lands with the trial's, not beside its own source.
+    """
+    global USAGE_PATH, BASELINE_PATH
+    with _lock:
+        _flush_locked()
+        USAGE_PATH = os.path.join(path, "reports", "bd_usage.json")
+        BASELINE_PATH = os.path.join(path, "reports", "bd_usage_baseline.json")
+
 _lock = threading.Lock()
 _pending: dict = {}  # path -> count, not yet flushed
 _pending_n = 0

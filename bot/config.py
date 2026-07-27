@@ -9,12 +9,36 @@ USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
 EXCLUDED_MINTS = {SOL_MINT, USDC_MINT, USDT_MINT}
 LAMPORTS_PER_SOL = 1_000_000_000
+SETUP_FAMILIES = {"base", "bounce"}
+
+
+def setup_families() -> set:
+    """Valid `websocket.setup_family` values, resolved at CALL time.
+
+    The 2026-07-27 search families live in strategies.py, which imports quest ->
+    backtest -> `from bot.config import Config`. Unioning them into
+    SETUP_FAMILIES at module import therefore deadlocks on a half-initialised
+    bot.config and silently yields an empty set - which then rejects every one
+    of those families at config load. Resolving on demand breaks the cycle:
+    by the time a Config is constructed, bot.config is fully initialised."""
+    try:
+        import strategies
+        return SETUP_FAMILIES | set(strategies.STRATEGIES)
+    except Exception:
+        return set(SETUP_FAMILIES)
 
 
 class Config:
     def __init__(self, raw: Dict[str, Any]):
         self.raw = raw
         self.mode: str = raw.get("mode", "paper")
+        # Strategy-family label. Several runners share this codebase and trade
+        # concurrently, one process per config file; `strategy` namespaces the
+        # per-process files they would otherwise overwrite for each other (the
+        # websocket status/state snapshots) and labels the runner in logs.
+        # Omitted => "base", which leaves every path the single-bot deployment
+        # wrote byte-identical.
+        self.strategy: str = str(raw.get("strategy") or "base").strip() or "base"
         self.rpc_url: str = os.environ.get("MEMEBOT_RPC_URL") or raw.get(
             "rpc_url", "https://api.mainnet-beta.solana.com"
         )
@@ -56,6 +80,9 @@ class Config:
         self.max_insider_pct: float = float(i.get("max_insider_pct", 15))
         self.max_sniper_pct: float = float(i.get("max_sniper_pct", 20))
         self.max_top10_pct: float = float(i.get("max_top10_pct", 45))
+        # Largest single non-market holder. Defaults to 100 (never binds) so
+        # configs written before this key behave exactly as they did.
+        self.max_top1_pct: float = float(i.get("max_top1_pct", 100))
         self.max_creator_pct: float = float(i.get("max_creator_pct", 10))
         self.min_holders: int = int(i.get("min_holders", 50))
 
@@ -110,6 +137,33 @@ class Config:
         self.ws_min_listing_liquidity: float = float(w.get("min_listing_liquidity_usd", 2_000))
         self.ws_min_cum_vol_usd: float = float(w.get("min_cum_vol_usd", 8_000))
         self.ws_persist_state: bool = bool(w.get("persist_state", True))
+
+        # Which validated entry pattern the live candle gate applies:
+        #   "base"   backtest.entry_setup_ok(DEFAULT_SETUP) - the original gate
+        #   "bounce" the loop8 P3 bounce trigger (see birdeye_ws._bounce_gate)
+        # "base" is the default, so existing configs are unchanged.
+        self.ws_setup_family: str = str(w.get("setup_family") or "base").strip().lower()
+        _fams = setup_families()
+        if self.ws_setup_family not in _fams:
+            # Fail at load, not silently at the first candidate: an unknown
+            # family that fell through to "base" would quietly trade the wrong
+            # strategy for days before anyone noticed.
+            raise ValueError(
+                f"websocket.setup_family {self.ws_setup_family!r} unknown; "
+                f"expected one of {sorted(_fams)}")
+        b = w.get("bounce", {})
+        self.bounce_drawdown: float = float(b.get("drawdown", 0.55))
+        self.bounce_trigger_vol_usd: float = float(b.get("trigger_vol_usd", 500))
+        mn = b.get("max_nukes", 1)
+        self.bounce_max_nukes = None if mn is None else int(mn)
+        self.bounce_credible_vol_usd: float = float(b.get("credible_vol_usd", 500))
+        self.bounce_min_cum_vol_usd: float = float(b.get("min_cum_vol_usd", 2_000))
+        self.bounce_max_wait_min: float = float(b.get("max_wait_min", 720))
+        # How stale the trigger candle may be when the gate sees it. The
+        # backtest bought at the trigger candle's close; scanning every
+        # scan_interval_sec means we are always a little late, and entering on
+        # a trigger that fired an hour ago is a different (worse) strategy.
+        self.bounce_max_trigger_age_min: float = float(b.get("max_trigger_age_min", 3))
 
     @property
     def position_size_lamports(self) -> int:

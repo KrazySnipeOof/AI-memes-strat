@@ -70,7 +70,22 @@ def bounce_entry(candles, dd, cv, max_nukes, floor=500.0, min_cum_vol=2000.0,
     return None
 
 
-def sim(candles, idx, entry, ex, intact_end, cost_pct=4.0, floor=500.0):
+def sim(candles, idx, entry, ex, intact_end, cost_pct=4.0, floor=500.0, fill=None):
+    """Exit machine for the loop8/freshlab families.
+
+    Censoring was already handled here: falling out of the loop with stock held
+    credits `last_rc` only when `intact_end` says the pool still has liquidity,
+    otherwise 0.0. freshlab passes intact_end=False, which is why it read BASE
+    at 0.226x while backtest.py - which had no such guard - read 1.605x.
+
+    `fill` (P2, see backtest.FILL_MODEL) is what was missing: stops and trails
+    filled at exactly their trigger level regardless of how far the candle low
+    sat below. Live trailing stops filled 15-27% under trigger. Pass
+    fill={"use_candle_low": False, ...} to reproduce the pre-fix numbers.
+    """
+    fill = backtest.FILL_MODEL if fill is None else fill
+    stop_slip = 1 - fill.get("stop_slip_pct", 0.0) / 100
+    trail_slip = 1 - fill.get("trail_slip_pct", 0.0) / 100
     stop_mult = 1 - ex["stop"] / 100
     post = candles[idx + 1:]
     if not post:
@@ -86,13 +101,15 @@ def sim(candles, idx, entry, ex, intact_end, cost_pct=4.0, floor=500.0):
         credible = real and cl >= 0.5 * h
         lo_m, hi_m, cl_m = l / entry, h / entry, cl / entry
         if not armed and lo_m <= stop_mult:
-            received += remaining * (stop_mult if real else min(stop_mult, cl_m))
+            got = stop_mult if real else min(stop_mult, cl_m)
+            received += remaining * backtest.fill_at(got, lo_m, fill) * stop_slip
             remaining = 0.0
             break
         if armed:
             level = peak * (1 - ex["trail"] / 100)
             if lo_m <= level:
-                received += remaining * (level if real else min(level, cl_m))
+                got = level if real else min(level, cl_m)
+                received += remaining * backtest.fill_at(got, lo_m, fill) * trail_slip
                 remaining = 0.0
                 break
         if credible:
@@ -107,8 +124,9 @@ def sim(candles, idx, entry, ex, intact_end, cost_pct=4.0, floor=500.0):
         elif real:
             last_rc, last_rt = cl_m, ts
         if age >= ex["hold"]:
-            fill = cl_m if real else (last_rc if last_rt and ts - last_rt <= 1800 else 0.0)
-            received += remaining * fill
+            # not `fill` - that name is the fill-model parameter
+            got = cl_m if real else (last_rc if last_rt and ts - last_rt <= 1800 else 0.0)
+            received += remaining * got
             remaining = 0.0
             break
     if remaining > 1e-12:

@@ -1,10 +1,11 @@
 {
+  "strategy": "bounce",
   "mode": "paper",
   "paper_starting_balance_sol": 1.0,
   "rpc_url": "https://api.mainnet-beta.solana.com",
   "wallet_pubkey": "5fAG5PkzwJJ3WrFeU86smsZ8cfEoLVYYfF833e39XE1w",
-  "db_path": "memebot-asym.sqlite",
-  "log_path": "memebot-asym.log",
+  "db_path": "memebot-bounce.sqlite",
+  "log_path": "memebot-bounce.log",
   "scan_interval_sec": 45,
   "position_size_sol": 0.25,
   "max_positions": 3,
@@ -15,13 +16,13 @@
   "paper_fee_lamports": 150000,
   "api_pause_sec": 0.4,
   "filters": {
-    "min_liquidity_usd": 20000,
+    "min_liquidity_usd": 10000,
     "max_liquidity_usd": 2000000,
-    "min_age_min": 30,
+    "min_age_min": 15,
     "max_age_min": 120,
     "max_fdv_to_liquidity": 60,
-    "min_vol_m5_usd": 2000,
-    "min_sells_m5": 3,
+    "min_vol_m5_usd": 1000,
+    "min_sells_m5": 1,
     "max_buy_sell_ratio": 12
   },
   "safety": {
@@ -43,7 +44,7 @@
     "enabled": true,
     "shadow": true,
     "try_gmgn": true,
-    "require_data": true,
+    "require_data": false,
     "max_insider_pct": 15,
     "max_sniper_pct": 20,
     "max_top10_pct": 45,
@@ -51,24 +52,22 @@
     "min_holders": 50
   },
   "narrative": {
-    "keywords": ["worldcup", "world cup", "fifa", "argentina", "spain", "france", "england",
-                 "brazil", "portugal", "messi", "mbappe", "yamal", "yamz", "cubarsi",
-                 "soccer", "futbol", "goal", "cup"],
+    "keywords": [],
     "require": false
   },
   "entry": {
-    "min_chg_m5_pct": -10.0,
-    "max_chg_m5_pct": 25.0,
-    "min_chg_h1_pct": -20.0,
-    "min_buy_sell_edge": 1.1
+    "min_chg_m5_pct": -100.0,
+    "max_chg_m5_pct": 10000.0,
+    "min_chg_h1_pct": -100.0,
+    "min_buy_sell_edge": 0.0
   },
   "exits": {
-    "stop_loss_pct": 40,
+    "stop_loss_pct": 50,
     "take_profits": [
-      { "multiple": 1.35, "sell_fraction_of_remaining": 0.3 }
+      { "multiple": 1.5, "sell_fraction_of_remaining": 0.0 }
     ],
-    "hard_tp_multiple": 20.0,
-    "trailing_stop_pct": 30,
+    "hard_tp_multiple": 10.0,
+    "trailing_stop_pct": 25,
     "max_hold_min": 180
   },
   "risk": {
@@ -78,12 +77,22 @@
     "enabled": true,
     "discovery": true,
     "apply_setup_filter": true,
+    "setup_family": "bounce",
+    "bounce": {
+      "drawdown": 0.55,
+      "trigger_vol_usd": 500,
+      "max_nukes": 1,
+      "credible_vol_usd": 500,
+      "min_cum_vol_usd": 2000,
+      "max_wait_min": 120,
+      "max_trigger_age_min": 3
+    },
     "backfill_rest": true,
     "max_backfills_per_cycle": 4,
     "max_promotions_per_cycle": 10,
     "max_price_subs": 95,
     "min_listing_liquidity_usd": 500,
-    "min_cum_vol_usd": 8000,
+    "min_cum_vol_usd": 0,
     "persist_state": true
   }
 }

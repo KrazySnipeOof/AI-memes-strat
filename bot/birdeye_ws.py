@@ -36,6 +36,7 @@ from typing import List, Optional
 import websocket
 
 import backtest  # repo root (run.py sys.path) - the validated setup gate lives there
+import strategies  # the 2026-07-27 search families, shared with the backtest
 import bdusage
 
 from .config import Config
@@ -50,6 +51,21 @@ STATE_PATH = os.path.join("reports", "ws_state.json")
 STATE_SAVE_SEC = 60        # periodic state-snapshot interval
 COVERAGE_SLACK_SEC = 180   # first candle must be within this of listing time
 MAX_CANDLE_MINTS = 200     # candle-store eviction cap
+NUKE_BODY = 0.70           # loop8_eval.NUKE_BODY - body-collapse definition
+
+
+def state_paths(strategy: str) -> tuple:
+    """(status, state) snapshot paths for one strategy family.
+
+    Each runner is its own process with its own watchlist and candle store, so
+    they must not share these files - two bots writing one snapshot would keep
+    restoring each other's funnel. The "base" family keeps the original
+    filenames, so an existing single-bot deployment restarts warm as before.
+    """
+    if strategy == "base":
+        return STATUS_PATH, STATE_PATH
+    return (os.path.join("reports", f"ws_status-{strategy}.json"),
+            os.path.join("reports", f"ws_state-{strategy}.json"))
 
 
 class BirdeyeFeed:
@@ -69,6 +85,7 @@ class BirdeyeFeed:
         self.stats = {"msgs": 0, "listings_seen": 0, "backfills": 0,
                       "reconnects": 0, "last_msg_ts": 0.0}
         self._save_lock = threading.Lock()
+        self.status_path, self.state_path = state_paths(cfg.strategy)
         if cfg.ws_persist_state:
             self._load_state()
 
@@ -256,6 +273,55 @@ class BirdeyeFeed:
                 store.setdefault(ts, [ts, o, h, l, c, vol])
         return True
 
+    def _bounce_gate(self, pre: list, now: int) -> tuple:
+        """Live translation of loop8_eval.bounce_entry, config P3.
+
+        Same scan the backtest ran: walk the candles from listing, track the
+        credible peak (volume floor + close at least half the high, peak capped
+        at 2x close), and fire on the FIRST credible green candle sitting
+        `drawdown` below that peak with enough volume behind it.
+
+        Two rules exist only live, both tightening:
+          * the still-forming candle is dropped - the trigger tests its close
+            and its volume, and neither is final until the minute is over;
+          * a trigger that fired more than `max_trigger_age_min` ago is
+            refused. The backtest bought at that candle's close; buying an
+            hour later is a different, worse strategy, and pretending
+            otherwise is how a backtest flatters itself.
+        """
+        cfg = self.cfg
+        closed = [r for r in pre if r[0] <= now - 60]
+        if len(closed) < 5:
+            return False, f"bounce: only {len(closed)} closed candles"
+        created = closed[0][0]
+        peak, cum_vol = 0.0, 0.0
+        nukes = 0
+        for ts, o, h, _l, cl, v in closed:
+            if (ts - created) / 60 > cfg.bounce_max_wait_min:
+                return False, (f"bounce: no trigger within "
+                               f"{cfg.bounce_max_wait_min:.0f}m of listing")
+            cum_vol += v
+            credible = v >= cfg.bounce_credible_vol_usd and cl >= 0.5 * h
+            if credible:
+                peak = max(peak, min(h, cl * 2))
+            if (peak > 0 and credible and cl > o
+                    and cl / peak <= 1 - cfg.bounce_drawdown
+                    and v >= cfg.bounce_trigger_vol_usd
+                    and cum_vol >= cfg.bounce_min_cum_vol_usd):
+                if cfg.bounce_max_nukes is not None and nukes > cfg.bounce_max_nukes:
+                    return False, (f"bounce: {nukes} collapse candles before trigger "
+                                   f"> max {cfg.bounce_max_nukes}")
+                age = (now - ts) / 60
+                if age > cfg.bounce_max_trigger_age_min:
+                    return False, (f"bounce: trigger fired {age:.0f}m ago > max "
+                                   f"{cfg.bounce_max_trigger_age_min:.0f}m; not chasing")
+                return True, (f"bounce ok ({100 * (1 - cl / peak):.0f}% off peak, "
+                              f"trigger {age:.1f}m ago, {len(closed)} candles, "
+                              f"cum vol ${cum_vol:,.0f})")
+            if o > 0 and cl / o <= NUKE_BODY:
+                nukes += 1
+        return False, "bounce: no trigger yet"
+
     def setup_gate(self, cand: Candidate, session, budget: list) -> tuple:
         """Run the backtest's exact base-entry gate on live candles.
         `budget` is a single-element list of remaining REST backfills this
@@ -282,14 +348,24 @@ class BirdeyeFeed:
         if not rows or rows[0][0] > created + COVERAGE_SLACK_SEC:
             return False, "setup: no candle coverage from listing"
         pre = [r for r in rows if r[0] <= now]
-        if len(pre) < 8:
-            return False, f"setup: only {len(pre)} candles"
+        need = strategies.min_pre_candles(self.cfg.ws_setup_family)
+        if len(pre) < need:
+            return False, f"setup: only {len(pre)} candles (need {need})"
         price = pre[-1][4]
         if price <= 0:
             return False, "setup: bad last price"
         cum_vol = sum(r[5] for r in pre)
         if cum_vol < self.cfg.ws_min_cum_vol_usd:
             return False, f"setup: cum vol ${cum_vol:,.0f} < ${self.cfg.ws_min_cum_vol_usd:,.0f}"
+        if self.cfg.ws_setup_family == "bounce":
+            return self._bounce_gate(pre, now)
+        # The 2026-07-27 search families. Same screen_ok() the backtest scored,
+        # so the live gate cannot drift from the validated definition.
+        if self.cfg.ws_setup_family in strategies.STRATEGIES:
+            fam = self.cfg.ws_setup_family
+            if not strategies.screen_ok(pre, now, price, fam):
+                return False, f"setup: {fam} screen failed"
+            return True, f"setup ok ({fam}, {len(pre)} candles, cum vol ${cum_vol:,.0f})"
         if not backtest.entry_setup_ok(pre, now, price, backtest.DEFAULT_SETUP):
             return False, "setup: base-entry pattern failed"
         return True, f"setup ok ({len(pre)} candles, cum vol ${cum_vol:,.0f})"
@@ -376,10 +452,10 @@ class BirdeyeFeed:
                         "watchlist": len(self.watch), "price_subs": len(self._subscribed),
                         "candle_mints": len(self.candles), **self.stats,
                         "updated": time.time()}
-            tmp = STATUS_PATH + ".tmp"
+            tmp = self.status_path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(snap, f)
-            os.replace(tmp, STATUS_PATH)
+            os.replace(tmp, self.status_path)
         except OSError:
             pass
 
@@ -398,10 +474,10 @@ class BirdeyeFeed:
         try:
             os.makedirs("reports", exist_ok=True)
             with self._save_lock:
-                tmp = STATE_PATH + ".tmp"
+                tmp = self.state_path + ".tmp"
                 with open(tmp, "w", encoding="utf-8") as f:
                     json.dump(snap, f, separators=(",", ":"))
-                os.replace(tmp, STATE_PATH)
+                os.replace(tmp, self.state_path)
         except OSError:
             pass
 
@@ -410,7 +486,7 @@ class BirdeyeFeed:
         starts). Age eviction applies as usual; promoted flags survive so
         restarts never re-promote; JSON string keys go back to int ts."""
         try:
-            with open(STATE_PATH, "r", encoding="utf-8") as f:
+            with open(self.state_path, "r", encoding="utf-8") as f:
                 snap = json.load(f)
         except (OSError, ValueError):
             return

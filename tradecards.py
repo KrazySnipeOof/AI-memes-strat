@@ -94,8 +94,12 @@ def entry_tiles(pre: list, entry_ts: int, entry: float, setup: dict | None,
     base = [c for c in pre if c[0] > entry_ts - s["base_window_min"] * 60]
     rng_pct = (100 * (max(c[2] for c in base) - min(c[3] for c in base)) / entry
                if base else None)
+    # same bounded lookback the gate uses (P1) - scanning all of `pre` here
+    # would draw tiles that disagree with the pass/fail the gate actually made
+    pw = s.get("peak_window_min")
+    scan = [c for c in pre if c[0] > entry_ts - pw * 60] if pw else pre
     cred_peak, nukes = 0.0, 0
-    for _ts, o, h, _l, cl, v in pre:
+    for _ts, o, h, _l, cl, v in scan:
         if v >= s["cred_vol_usd"] and cl >= 0.5 * h:
             cred_peak = max(cred_peak, min(h, cl * 2))
         if o > 0 and cl / o <= s["nuke_body"]:
@@ -119,7 +123,9 @@ def entry_tiles(pre: list, entry_ts: int, entry: float, setup: dict | None,
              rng_pct is None or rng_pct <= s["max_base_range_pct"],
              f"high−low of the last {s['base_window_min']}m as % of entry · gate ≤{s['max_base_range_pct']:.0f}%"),
         tile(str(nukes), "Nukes", nukes <= s["max_nukes"],
-             f"collapse candles (close/open ≤{s['nuke_body']:.2f}) over the whole pre-entry life · gate ≤{s['max_nukes']}"),
+             f"collapse candles (close/open ≤{s['nuke_body']:.2f}) in the last "
+            f"{pw}m · gate ≤{s['max_nukes']}" if pw else
+            f"collapse candles (close/open ≤{s['nuke_body']:.2f}) over the whole pre-entry life · gate ≤{s['max_nukes']}"),
         tile(f"{100 * frac:.0f}%" if frac is not None else "—", "Of Peak",
              frac is None or frac >= s["min_frac_of_peak"],
              f"entry vs credible peak (candle vol ≥${s['cred_vol_usd']:.0f}, wash-guarded) · gate ≥{s['min_frac_of_peak']:.0%}"),
