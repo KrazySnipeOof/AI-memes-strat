@@ -40,9 +40,20 @@ import bdusage
 TOKENS_JSON = os.path.join("reports", "bd_tokens.json")
 CACHE_DIR = ".bd_cache"
 TRADES_PATH = os.path.join("reports", "mc_trades.json")
+CLUSTER_PATH = os.path.join("reports", "cluster_backtest.json")
+HOMERUN_PATH = os.path.join("reports", "homerun_backtest.json")
+NEWSTRAT_PATH = os.path.join("reports", "newstrat_backtest.json")
 ENTRY_AGE_MIN = 30.0   # telemetry-standard entry params (HANDOFF.md)
 MIN_ENTRY_VOL = 8000.0
 COST_PCT = 4.0
+
+
+def _read_json(path):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
 
 
 # ---------------------------------------------------------------- trade pool
@@ -221,12 +232,77 @@ def histogram(xs: list, lo: float, hi: float, nbins: int) -> dict:
     return {"edges": edges, "counts": counts, "tail": tail}
 
 
+# --------------------------------------------------- per-strategy MC payload
+
+def build_payload(key: str, label: str, note: str, pool: list, args, seed: int) -> dict:
+    """Run the full scenario battery + fan/histograms for one strategy's trade
+    pool, returning a self-contained payload the page can render on its own.
+    Same shape for every strategy so the dropdown can swap between them."""
+    pool = list(pool)
+    wins = [m for m in pool if m > 1.0]
+    mean = statistics.mean(pool)
+    pool_risk = risk_stats(pool)
+    live_rate = 3 * 24 / 8.0
+    pool_stats = {
+        "n": len(pool), "wr": round(100 * len(wins) / len(pool), 1),
+        "avg": round(mean, 3), "median": round(statistics.median(pool), 3),
+        "min": round(min(pool), 3), "max": round(max(pool), 3),
+        "breakeven_extra_cost_pct": round(100 * (1 - 1 / mean), 1) if mean > 0 else 0.0,
+        "live_trades_per_day_max": round(live_rate, 1),
+        **pool_risk,
+    }
+    drop = max(1, int(len(pool) * args.drop_top_pct / 100))
+    pool_no_top = sorted(pool)[:-drop]
+    common = dict(paths=args.paths, horizon=args.horizon, start=args.start_sol,
+                  stake_sol=args.stake_sol, block=args.block)
+    scenarios = [
+        ("iid", "IID bootstrap - fixed stake",
+         dict(pool=pool, sampler="iid", stake_frac=0.0, haircut=1.0, keep_curves=2000)),
+        ("block10", f"Block bootstrap (block={args.block}) - regime clustering",
+         dict(pool=pool, sampler="block", stake_frac=0.0, haircut=1.0)),
+        ("stress", f"IID + extra {args.extra_cost_pct:.0f}% per-trade cost",
+         dict(pool=pool, sampler="iid", stake_frac=0.0, haircut=1 - args.extra_cost_pct / 100)),
+        ("no_top", f"IID minus top {args.drop_top_pct:.0f}% winners (n={len(pool_no_top)})",
+         dict(pool=pool_no_top, sampler="iid", stake_frac=0.0, haircut=1.0)),
+        ("frac5", f"IID - {args.stake_frac:.0%} of equity compounding stake",
+         dict(pool=pool, sampler="iid", stake_frac=args.stake_frac, haircut=1.0)),
+    ]
+    results = {}
+    for i, (k, lab, kw) in enumerate(scenarios):
+        p = kw.pop("pool")
+        results[k] = {"label": lab, **run_scenario(p, seed=seed + i, **common, **kw),
+                      "risk": risk_stats([m * kw["haircut"] for m in p])}
+    curves = results["iid"].pop("_curves")
+    bands = {str(q): [] for q in (5, 25, 50, 75, 95)}
+    for t in range(args.horizon + 1):
+        col = sorted(c[t] for c in curves)
+        for q in (5, 25, 50, 75, 95):
+            bands[str(q)].append(round(pctl(col, q), 4))
+    samples = [[round(v, 4) for v in c] for c in curves[:30]]
+    finals = results["iid"].pop("_finals")
+    maxdds = results["iid"].pop("_maxdds")
+    hist_final = histogram(finals, 0.0, pctl(sorted(finals), 99), 30)
+    hist_dd = histogram([100 * d for d in maxdds], 0.0, max(1.0, math.ceil(max(maxdds) * 40) * 2.5), 24)
+    for k in results:
+        for junk in ("_finals", "_maxdds", "_curves"):
+            results[k].pop(junk, None)
+    return {
+        "key": key, "label": label, "note": note, "pool": pool_stats,
+        "params": {"paths": args.paths, "horizon": args.horizon, "start_sol": args.start_sol,
+                   "stake_sol": args.stake_sol, "stake_frac": args.stake_frac, "seed": seed,
+                   "live_days_min": round(args.horizon / live_rate, 1)},
+        "scenarios": [{"key": k, **results[k]} for k, _, _ in scenarios],
+        "fan": {"bands": bands, "samples": samples},
+        "hist_final": hist_final, "hist_dd": hist_dd,
+    }
+
+
 # ------------------------------------------------------------------- report
 
-def build_html(data: dict, path: str) -> None:
+def build_html(data: dict, pooln: int, path: str) -> None:
     html = (HTML_TEMPLATE
             .replace("%%DATA%%", json.dumps(data))
-            .replace("%%POOLN%%", str(data["pool"]["n"]))
+            .replace("%%POOLN%%", str(pooln))
             .replace("%%BDSNAP%%", json.dumps(bdusage.snapshot())))
     with open(path, "w", encoding="utf-8") as f:
         f.write(html)
@@ -248,102 +324,82 @@ def main() -> None:
     ap.add_argument("--drop-top-pct", type=float, default=5.0,
                     help="top winners removed in the no_top scenario")
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--follow-lag", type=int, default=5,
+                    help="entry lag (min) for the copy/cluster pools sourced from cluster_backtest.json")
     ap.add_argument("--refresh-trades", action="store_true",
                     help="rebuild reports/mc_trades.json from the candle cache")
     args = ap.parse_args()
 
     doc = load_trades(args.refresh_trades)
-    pool = [t["multiple"] for t in doc["trades"]]
-    if len(pool) < 30:
-        sys.exit(f"only {len(pool)} trades in the pool - not enough to resample")
+    base_pool = [t["multiple"] for t in doc["trades"]]
+    if len(base_pool) < 30:
+        sys.exit(f"only {len(base_pool)} trades in the base pool - not enough to resample")
 
-    wins = [m for m in pool if m > 1.0]
-    entry_ts = [t["entry_ts"] for t in doc["trades"]]
-    span_days = max(1e-9, (max(entry_ts) - min(entry_ts)) / 86400)
-    rate = len(pool) / span_days
-    # extra per-trade cost that zeroes the mean edge: margin of safety vs
-    # worse-than-modeled live fills (mean(m * (1-h)) = 1)
-    breakeven_pct = 100 * (1 - 1 / statistics.mean(pool))
-    # live pace ceiling: max_positions slots recycled every max_hold hours;
-    # the sample's 50+/day comes from many tokens trading CONCURRENTLY
-    live_rate = 3 * 24 / 8.0
-    pool_risk = risk_stats(pool)
-    pool_stats = {
-        "n": len(pool), "wr": round(100 * len(wins) / len(pool), 1),
-        "avg": round(statistics.mean(pool), 3), "median": round(statistics.median(pool), 3),
-        "min": round(min(pool), 3), "max": round(max(pool), 3),
-        "span_days": round(span_days, 1), "sample_trades_per_day": round(rate, 1),
-        "live_trades_per_day_max": round(live_rate, 1),
-        "breakeven_extra_cost_pct": round(breakeven_pct, 1),
-        **pool_risk,
-    }
-    print(f"pool: {pool_stats['n']} trades | WR {pool_stats['wr']}% | "
-          f"avg {pool_stats['avg']}x | median {pool_stats['median']}x | "
-          f"range {pool_stats['min']}-{pool_stats['max']}x")
-    print(f"edge margin: mean expectancy survives up to {breakeven_pct:.0f}% extra "
-          f"per-trade cost before going negative")
-    print(f"per-trade: EV {pool_risk['ev_pct']:+.1f}% of stake "
-          f"({args.stake_sol * pool_risk['ev_pct'] / 100:+.4f} SOL on {args.stake_sol}) | "
-          f"Sharpe {pool_risk['sharpe']} | Sortino {pool_risk['sortino']} (rf=0)")
+    strategies = []
+    strategies.append(build_payload(
+        "base", "Base-entry (paper-trial strategy)",
+        f"The bot's own strategy: base-entry setup filter + asym-runner exits, resampled from the "
+        f"validated {len(base_pool)}-trade backtest sample. This is the live-arbiter strategy; "
+        f"the audit below applies to it.",
+        base_pool, args, seed=args.seed))
 
-    drop = max(1, int(len(pool) * args.drop_top_pct / 100))
-    pool_no_top = sorted(pool)[:-drop]
-    common = dict(paths=args.paths, horizon=args.horizon, start=args.start_sol,
-                  stake_sol=args.stake_sol, block=args.block)
-    scenarios = [
-        ("iid", "IID bootstrap - fixed stake",
-         dict(pool=pool, sampler="iid", stake_frac=0.0, haircut=1.0, keep_curves=2000)),
-        ("block10", f"Block bootstrap (block={args.block}) - regime clustering",
-         dict(pool=pool, sampler="block", stake_frac=0.0, haircut=1.0)),
-        ("stress", f"IID + extra {args.extra_cost_pct:.0f}% per-trade cost",
-         dict(pool=pool, sampler="iid", stake_frac=0.0,
-              haircut=1 - args.extra_cost_pct / 100)),
-        ("no_top", f"IID minus top {args.drop_top_pct:.0f}% winners (n={len(pool_no_top)})",
-         dict(pool=pool_no_top, sampler="iid", stake_frac=0.0, haircut=1.0)),
-        ("frac5", f"IID - {args.stake_frac:.0%} of equity compounding stake",
-         dict(pool=pool, sampler="iid", stake_frac=args.stake_frac, haircut=1.0)),
-    ]
+    # copy / cluster pools come from the UNBIASED cluster backtest (full buy
+    # stream, winners AND rugs), at the chosen follow lag.
+    cb = _read_json(CLUSTER_PATH)
+    lag = str(int(args.follow_lag))
+    if cb and cb.get("raw"):
+        W = cb.get("window_min", "?")
+        ab = (cb["raw"].get("ALLBUYS") or {}).get(lag) or []
+        cl = (cb["raw"].get("CLUSTER_T2") or {}).get(lag) or []
+        if len(ab) >= 30:
+            strategies.append(build_payload(
+                "copy_all", "Copy-all buys (unbiased)",
+                f"Enter every token a monitored wallet bought (+{lag}m lag), over their full swap "
+                f"stream - winners AND rugs. Unbiased at the token level, but still WALLET-selection "
+                f"biased (curated profitable wallets) and it inherits the backtest's fill optimism "
+                f"(gap-through stops fill at the stop). Not proven live - treat as an upper bound.",
+                ab, args, seed=args.seed + 100))
+        if len(cl) >= 20:
+            strategies.append(build_payload(
+                "cluster", "Cluster-confirmed (unbiased)",
+                f"Enter only when a 2nd monitored wallet confirms the token within {W}m (+{lag}m "
+                f"lag). The unbiased test found this does NOT beat copy-all or solo: co-accumulation "
+                f"helps the leader, not a lagged follower whose stops cap the extra upside. Shown so "
+                f"you can see the distributions side by side.",
+                cl, args, seed=args.seed + 200))
 
-    results = {}
-    for i, (key, label, kw) in enumerate(scenarios):
-        p = kw.pop("pool")
-        results[key] = {"label": label,
-                        **run_scenario(p, seed=args.seed + i, **common, **kw),
-                        "risk": risk_stats([m * kw["haircut"] for m in p])}
+    # home-run pool from the moonshot backtest (ride-to-30x + low-mcap screen)
+    hr = _read_json(HOMERUN_PATH)
+    hrv = (hr or {}).get("config_variant") or {}
+    if hrv.get("multiples") and len(hrv["multiples"]) >= 20:
+        strategies.append(build_payload(
+            "homerun", "Home-run (moonshot, ride-to-10x+)",
+            f"Only low-mcap tokens with momentum ({hrv.get('screen', 'moonshot screen')}), ride winners "
+            f"to 10-30x, cut losers at -55% (n={hrv['n']}). Asymmetric: the whole edge rides on the rare "
+            f"home runs, so it is HIGH-VARIANCE and shares the backtest's tail-flattering fill optimism. "
+            f"~1-3 trades/week live (density-estimated). Now paper-trading; the live ledger is the arbiter.",
+            hrv["multiples"], args, seed=args.seed + 300))
 
-    # fan-chart bands from the headline (iid) scenario's stored curves
-    curves = results["iid"].pop("_curves")
-    bands = {str(q): [] for q in (5, 25, 50, 75, 95)}
-    for t in range(args.horizon + 1):
-        col = sorted(c[t] for c in curves)
-        for q in (5, 25, 50, 75, 95):
-            bands[str(q)].append(round(pctl(col, q), 4))
-    samples = [[round(v, 4) for v in c] for c in curves[:30]]
+    # the 3 family strategies (sniper / volume_anomaly / dip), organic-only,
+    # short-hold; pools from newstrat_backtest.json.
+    ns = _read_json(NEWSTRAT_PATH)
+    for i, (k, sp) in enumerate((ns or {}).get("strategies", {}).items()):
+        st = sp.get("stats", {})
+        mults = sp.get("multiples") or []
+        if len(mults) >= 20:
+            strategies.append(build_payload(
+                k, f"{sp.get('label', k)} (organic, <{int(sp['exits']['max_hold_min'])}m hold)",
+                f"Family screen '{sp.get('family')}', ORGANIC-only, exits within "
+                f"{int(sp['exits']['max_hold_min'])}m. Backtest n={st.get('n')}, WR {st.get('wr')}%, "
+                f"avg {st.get('avg')}x, exp {st.get('exp_pct')}%/trade, median hold "
+                f"{st.get('median_hold_min')}m. Shares the backtest's fill optimism; now paper-trading.",
+                mults, args, seed=args.seed + 400 + i * 100))
 
-    finals = results["iid"].pop("_finals")
-    maxdds = results["iid"].pop("_maxdds")
-    hist_final = histogram(finals, 0.0, pctl(sorted(finals), 99), 30)
-    hist_dd = histogram([100 * d for d in maxdds], 0.0,
-                        math.ceil(max(maxdds) * 40) * 2.5, 24)
-    for key in results:
-        results[key].pop("_finals", None)
-        results[key].pop("_maxdds", None)
-        results[key].pop("_curves", None)
-
-    live_days = args.horizon / live_rate
     data = {
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "strategy": "asym-runner v2 + base-entry filter",
-        "params": {"paths": args.paths, "horizon": args.horizon,
-                   "start_sol": args.start_sol, "stake_sol": args.stake_sol,
-                   "stake_frac": args.stake_frac, "seed": args.seed,
-                   "live_days_min": round(live_days, 1),
-                   "trades_generated_at": doc["generated_at"]},
-        "pool": pool_stats,
-        "scenarios": [{"key": k, **results[k]} for k, _, _ in scenarios],
-        "fan": {"bands": bands, "samples": samples},
-        "hist_final": hist_final,
-        "hist_dd": hist_dd,
+        "active": "base", "follow_lag": int(args.follow_lag),
+        "trades_generated_at": doc["generated_at"],
+        "strategies": strategies,
     }
 
     os.makedirs("reports", exist_ok=True)
@@ -351,35 +407,19 @@ def main() -> None:
     with open(jpath, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=1)
     print(f"machine-readable: {os.path.abspath(jpath)}")
-    build_html(data, os.path.join("reports", "montecarlo.html"))
+    build_html(data, len(base_pool), os.path.join("reports", "montecarlo.html"))
 
-    s = args.start_sol
-    print(f"\n== MONTE CARLO  {args.paths} paths x {args.horizon} trades ==")
-    print(f"horizon in wall-time: >= {live_days:.0f} days live (bot ceiling ~{live_rate:.0f} "
-          f"trades/day: 3 slots x 8h holds); the backtest sample packed "
-          f"{rate:.0f}/day across concurrent tokens")
-    print(f"sizing: fixed {args.stake_sol} SOL stake from {s:.2f} SOL start "
-          f"(frac5: {args.stake_frac:.0%} of equity)")
-    hdr = (f"{'scenario':<10} {'med final':>10} {'p5':>7} {'p95':>7} {'P(loss)':>8} "
-           f"{'P(2x end)':>9} {'medDD':>6} {'p95DD':>6} {'P(DD>=50%)':>10}")
-    print(hdr)
-    print("-" * len(hdr))
-    for key, _, _ in scenarios:
-        r = results[key]
-        print(f"{key:<10} {r['final'][50]:>8.2f}sol {r['final'][5]:>7.2f} {r['final'][95]:>7.2f} "
-              f"{100 * r['p_loss']:>7.1f}% {100 * r['p_end_2x']:>8.1f}% "
-              f"{r['dd'][50]:>5.1f}% {r['dd'][95]:>5.1f}% {100 * r['p_dd50']:>9.2f}%")
-    print(f"\nrisk-adjusted, per-trade returns on the stake (rf=0; x{math.sqrt(args.horizon):.0f} "
-          f"for the {args.horizon}-trade horizon):")
-    print(f"{'scenario':<10} {'EV/trade':>9} {'Sharpe':>7} {'Sortino':>8}")
-    for key, _, _ in scenarios:
-        rk = results[key]["risk"]
-        print(f"{key:<10} {rk['ev_pct']:>+8.1f}% {rk['sharpe']:>7.2f} {rk['sortino']:>8.2f}")
-    print("\nCAVEATS: resamples BACKTEST multiples (simulated fills; censored exits resolved")
-    print(f"by the engine's coverage policy, NOT marked at last price; {len(pool)}-trade")
-    print("sample). IID/block assume the future draws from the same")
-    print("distribution - regime change is NOT modeled. Daily loss limit not modeled.")
-    print("Paper trading remains the arbiter of real edge.")
+    print(f"\n== MONTE CARLO  {args.paths} paths x {args.horizon} trades x "
+          f"{len(strategies)} strategies ==")
+    for sp in strategies:
+        ps, iid = sp["pool"], next(s for s in sp["scenarios"] if s["key"] == "iid")
+        print(f"\n[{sp['key']}] {sp['label']}: pool {ps['n']} | WR {ps['wr']}% | "
+              f"avg {ps['avg']}x | EV {ps['ev_pct']:+.1f}%/trade | Sharpe {ps['sharpe']}")
+        print(f"  median final {iid['final'][50]:.2f} SOL ({iid['final'][50] / args.start_sol:.2f}x) "
+              f"| P(loss) {100 * iid['p_loss']:.1f}% | P(2x end) {100 * iid['p_end_2x']:.1f}% "
+              f"| p95 maxDD {iid['dd'][95]:.1f}%")
+    print("\nCAVEATS: all pools resample BACKTEST/simulated-fill multiples. copy_all & cluster")
+    print("are also wallet-selection biased (curated profitable wallets). Paper trading is the arbiter.")
 
 
 # ----------------------------------------------------------------- template
@@ -429,7 +469,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   main { max-width: 1060px; margin: 0 auto; }
   h1 { font-size: 22px; font-weight: 650; }
   h2 { font-size: 15px; font-weight: 650; margin: 0 0 2px; }
-  .sub { color: var(--ink-2); margin: 4px 0 20px; }
+  .sub { color: var(--ink-2); margin: 4px 0 12px; }
+  .stratbar { display: flex; align-items: center; gap: 10px; margin: 2px 0 10px; flex-wrap: wrap; }
+  .stratbar label { color: var(--ink-2); font-size: 13px; font-weight: 600; }
+  .stratbar select { font: inherit; padding: 6px 12px; border-radius: 8px;
+      border: 1px solid var(--border); background: var(--surface-1); color: var(--ink); cursor: pointer; }
+  .provenance { color: var(--ink-2); font-size: 13px; line-height: 1.5; margin: 0 0 18px;
+      padding: 10px 13px; border-left: 3px solid var(--series-2); background: var(--surface-1);
+      border-radius: 0 8px 8px 0; }
   .caption { color: var(--muted); font-size: 12.5px; margin-top: 6px; }
   .card { background: var(--surface-1); border: 1px solid var(--border);
           border-radius: 10px; padding: 16px 18px; margin-bottom: 18px; }
@@ -497,6 +544,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <a class="tab" href="/trades" title="Per-trade journal cards">TRADE JOURNAL</a>
   <span class="tab on">MONTE CARLO</span>
   <a class="tab" href="/blacklist" title="Charts purged from the sample — manual flags + auto wash-ramps">BLACKLIST</a>
+  <a class="tab" href="/wallets" title="Scouted copy-trade wallets + tracked watchlist + live harvest">WALLETS</a>
   <button id="mcref" class="tab" title="Re-run montecarlo.py --refresh-trades via the dashboard: rebuilds the trade pool from the current cleaned sample (config.asym.json exits + base-entry filter), then reloads this page with the new numbers.">⟳ REFRESH POOL</button>
   <div class="bd" title="Lite plan: 2.5M CU/cycle (anchored the 20th), 15 RPS, overage $15/1M CU. Local ledger + reconstructed baseline (Birdeye has no usage API - their Usages/Metrics page is authoritative). OHLCV CU cost is an estimate.">
     <span class="bdlab">BIRDEYE API</span><span id="bdtext">no usage tracked yet</span>
@@ -505,7 +553,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 </div>
 <main>
   <h1>Monte Carlo — equity paths</h1>
+  <div class="stratbar">
+    <label for="strat">Strategy</label>
+    <select id="strat"></select>
+  </div>
   <p class="sub" id="subtitle"></p>
+  <p class="provenance" id="provenance"></p>
   <div class="tiles" id="tiles"></div>
 
   <div class="card">
@@ -552,8 +605,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <div class="card">
     <h2>Assumptions &amp; caveats</h2>
     <ul class="caveats">
-      <li><b>How to read this page:</b> the trade pool is <b>negative-expectancy</b>, so most paths end below the starting bankroll. Sequencing is not the interesting risk here — the distribution itself is losing. Read the scenario table as "how bad, how often", not as a survival question.</li>
-      <li>Trade pool = <b>backtest</b> multiples (simulated fills, 4% round-trip cost, conservative candle-ambiguity rule). Positions whose candles run out before <code>max_hold</code> are <b>censored</b>, not completed: they are resolved by the engine's <code>coverage</code> policy (default <code>stop</code> — the bot's own stop/time exit firing against a pool nobody else is trading; rugs book 0). They are <b>never</b> marked at the last traded price. That older behaviour inflated this report to 84.8% WR / 1.607x, because the exit rules guarantee the censored subset is the still-winning one.</li>
+      <li><b>How to read this page:</b> the <b>Strategy</b> dropdown swaps between trade pools — every chart, tile and table below re-renders for the selected one. <b>Every pool here is negative-expectancy</b>, so most paths end below the starting bankroll; read the scenario table as "how bad, how often", not as a survival question. Sequencing is not the interesting risk when the distribution itself loses.</li>
+      <li><b>The three strategies are not equally trustworthy.</b> <i>Base-entry</i> is the bot's validated backtest sample (the audit below covers it). <i>Copy-all</i> and <i>Cluster-confirmed</i> are sourced from the monitored wallets' real buy stream — unbiased at the token level (rugs included) but still <b>wallet-selection biased</b>: they only exist because those wallets were curated for past profit, so their high win rates partly reflect who was picked, not a repeatable edge. The unbiased test also found cluster-confirm does <b>not</b> beat copy-all. Both inherit the backtest's optimistic fills.</li>
+      <li>Trade pool = <b>backtest</b> multiples (simulated fills, 4% round-trip cost, conservative candle-ambiguity rule). Positions whose candles run out before <code>max_hold</code> are <b>censored</b>, not completed: they are resolved by the engine's <code>coverage</code> policy (default <code>stop</code> — the bot's own stop/time exit firing against a pool nobody else is trading; rugs book 0). They are <b>never</b> marked at the last traded price. That older behaviour inflated this report to 84.8% WR / 1.607x on the base pool, because the exit rules guarantee the censored subset is the still-winning one.</li>
       <li>Bootstrap assumes future trades draw from the same distribution as the %%POOLN%%-trade sample. <b>Regime change is not modeled</b> — the block and no-top scenarios are partial stress tests, not a substitute.</li>
       <li>Fixed-stake sizing mirrors <code>config.asym.json</code> (0.25 SOL/trade). The bot's daily loss limit (0.75 SOL) is <b>not</b> modeled; it would truncate the worst same-day sequences.</li>
       <li>Paper trading remains the arbiter of real edge (locked project rule). This page quantifies path risk <i>if</i> the backtest distribution holds — it is not evidence that it will.</li>
@@ -589,7 +643,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <div id="tt"></div>
 <script type="application/json" id="mc-data">%%DATA%%</script>
 <script>
-const D = JSON.parse(document.getElementById('mc-data').textContent);
+const ALL = JSON.parse(document.getElementById('mc-data').textContent);
+let D, P;  // active strategy payload + its params (set by activate())
 const css = n => getComputedStyle(document.body).getPropertyValue(n).trim();
 const fmt = (x, d=2) => Number(x).toLocaleString('en-US',
   {minimumFractionDigits: d, maximumFractionDigits: d});
@@ -617,33 +672,36 @@ function niceTicks(lo, hi, n) {
 const S = 5;  // stroke-safe outer pad
 
 // ---------------- header, tiles ----------------
-const P = D.params, iid = D.scenarios.find(s => s.key === 'iid');
-document.getElementById('subtitle').textContent =
-  D.strategy + ' - ' + P.paths.toLocaleString() + ' simulated paths x ' + P.horizon +
-  ' trades (>= ' + P.live_days_min + ' days live at the bot\\'s 3-slot ceiling) - pool: ' +
-  D.pool.n + ' backtest trades, ' + D.pool.wr + '% WR, ' + D.pool.avg +
-  'x avg - generated ' + D.generated_at;
-const tiles = [
-  ['Paths ending profitable', pc(1 - iid.p_loss), 'after ' + P.horizon + ' trades'],
-  ['Median final equity', fmt(iid.final[50] / P.start_sol, 2) + 'x',
-   fmt(iid.final[50]) + ' SOL from ' + fmt(P.start_sol)],
-  ['5th-percentile final', fmt(iid.final[5] / P.start_sol, 2) + 'x',
-   fmt(iid.final[5]) + ' SOL'],
-  ['Touched 2x at any point', pc(iid.p_touch_2x), 'within ' + P.horizon + ' trades'],
-  ['Median max drawdown', fmt(iid.dd[50], 1) + '%', 'p95: ' + fmt(iid.dd[95], 1) + '%'],
-  ['Max DD >= 50%', pc(iid.p_dd50, 2), 'kill-switch territory'],
-  ['Edge margin', fmt(D.pool.breakeven_extra_cost_pct, 0) + '%',
-   'extra per-trade cost until the mean edge is gone'],
-  ['Expected value / trade', (D.pool.ev_pct > 0 ? '+' : '') + fmt(D.pool.ev_pct, 1) + '%',
-   (D.pool.ev_pct > 0 ? '+' : '') + fmt(P.stake_sol * D.pool.ev_pct / 100, 3) +
-   ' SOL on a ' + P.stake_sol + ' SOL stake'],
-];
-document.getElementById('tiles').innerHTML = tiles.map(t =>
-  '<div class="tile"><div class="label">' + t[0] + '</div><div class="value">' +
-  t[1] + '</div><div class="note">' + t[2] + '</div></div>').join('');
+function renderHeader() {
+  const iid = D.scenarios.find(s => s.key === 'iid');
+  document.getElementById('subtitle').textContent =
+    D.label + ' - ' + P.paths.toLocaleString() + ' simulated paths x ' + P.horizon +
+    ' trades (>= ' + P.live_days_min + ' days live at the bot\\'s 3-slot ceiling) - pool: ' +
+    D.pool.n + ' trades, ' + D.pool.wr + '% WR, ' + D.pool.avg +
+    'x avg - generated ' + ALL.generated_at;
+  document.getElementById('provenance').textContent = D.note;
+  const tiles = [
+    ['Paths ending profitable', pc(1 - iid.p_loss), 'after ' + P.horizon + ' trades'],
+    ['Median final equity', fmt(iid.final[50] / P.start_sol, 2) + 'x',
+     fmt(iid.final[50]) + ' SOL from ' + fmt(P.start_sol)],
+    ['5th-percentile final', fmt(iid.final[5] / P.start_sol, 2) + 'x',
+     fmt(iid.final[5]) + ' SOL'],
+    ['Touched 2x at any point', pc(iid.p_touch_2x), 'within ' + P.horizon + ' trades'],
+    ['Median max drawdown', fmt(iid.dd[50], 1) + '%', 'p95: ' + fmt(iid.dd[95], 1) + '%'],
+    ['Max DD >= 50%', pc(iid.p_dd50, 2), 'kill-switch territory'],
+    ['Edge margin', fmt(D.pool.breakeven_extra_cost_pct, 0) + '%',
+     'extra per-trade cost until the mean edge is gone'],
+    ['Expected value / trade', (D.pool.ev_pct > 0 ? '+' : '') + fmt(D.pool.ev_pct, 1) + '%',
+     (D.pool.ev_pct > 0 ? '+' : '') + fmt(P.stake_sol * D.pool.ev_pct / 100, 3) +
+     ' SOL on a ' + P.stake_sol + ' SOL stake'],
+  ];
+  document.getElementById('tiles').innerHTML = tiles.map(t =>
+    '<div class="tile"><div class="label">' + t[0] + '</div><div class="value">' +
+    t[1] + '</div><div class="note">' + t[2] + '</div></div>').join('');
+}
 
 // ---------------- fan chart ----------------
-(function fan() {
+function renderFan() {
   const W = 1020, H = 400, m = {l: 58, r: 20, t: 12, b: 36};
   const B = D.fan.bands, N = P.horizon;
   const ymax = Math.max(...B['95'], P.start_sol) * 1.05;
@@ -706,7 +764,7 @@ document.getElementById('tiles').innerHTML = tiles.map(t =>
     rows += '<tr><td>' + i + '</td>' + [5, 25, 50, 75, 95].map(q =>
       '<td>' + fmt(B[String(q)][i]) + '</td>').join('') + '</tr>';
   document.getElementById('fan-table').innerHTML = rows + '</table>';
-})();
+}
 
 // ---------------- histograms ----------------
 function hist(elId, hd, color, xfmt, ttfmt, refX) {
@@ -752,19 +810,21 @@ function hist(elId, hd, color, xfmt, ttfmt, refX) {
     b.addEventListener('mouseleave', hideTT);
   });
 }
-hist('hist-final', D.hist_final, css('--series-1'), v => fmt(v, 0),
-  (a, b) => fmt(a, 1) + ' - ' + fmt(b, 1) + ' SOL', P.start_sol);
-document.getElementById('hf-caption').textContent =
-  'Equity after ' + P.horizon + ' trades, IID scenario (clipped at p99' +
-  (D.hist_final.tail ? '; ' + D.hist_final.tail + ' paths above fold into the last bar' : '') +
-  '). Reference line = ' + fmt(P.start_sol) + ' SOL start.';
-hist('hist-dd', D.hist_dd, css('--series-2'), v => fmt(v, 0) + '%',
-  (a, b) => fmt(a, 1) + '% - ' + fmt(b, 1) + '% max drawdown', null);
-document.getElementById('hd-caption').textContent =
-  'Worst peak-to-trough equity drawdown per path, IID scenario.';
+function renderHists() {
+  hist('hist-final', D.hist_final, css('--series-1'), v => fmt(v, 0),
+    (a, b) => fmt(a, 1) + ' - ' + fmt(b, 1) + ' SOL', P.start_sol);
+  document.getElementById('hf-caption').textContent =
+    'Equity after ' + P.horizon + ' trades, IID scenario (clipped at p99' +
+    (D.hist_final.tail ? '; ' + D.hist_final.tail + ' paths above fold into the last bar' : '') +
+    '). Reference line = ' + fmt(P.start_sol) + ' SOL start.';
+  hist('hist-dd', D.hist_dd, css('--series-2'), v => fmt(v, 0) + '%',
+    (a, b) => fmt(a, 1) + '% - ' + fmt(b, 1) + '% max drawdown', null);
+  document.getElementById('hd-caption').textContent =
+    'Worst peak-to-trough equity drawdown per path, IID scenario.';
+}
 
 // ---------------- risk-adjusted returns ----------------
-(function risk() {
+function renderRisk() {
   const R = D.pool, hs = Math.sqrt(P.horizon);
   const sign = (x, d) => (x > 0 ? '+' : '') + fmt(x, d);
   const rtiles = [
@@ -792,10 +852,10 @@ document.getElementById('hd-caption').textContent =
       '<td>' + fmt(k.sharpe * hs, 1) + '</td><td>' + fmt(k.sortino * hs, 1) + '</td></tr>';
   }
   document.getElementById('risk-table').innerHTML = h + '</table>';
-})();
+}
 
 // ---------------- scenario table ----------------
-(function table() {
+function renderScen() {
   const cols = ['scenario', 'median final', 'p5', 'p95', 'P(end &lt; start)',
                 'P(end &ge; 2x)', 'median maxDD', 'p95 maxDD', 'P(DD &ge; 50%)'];
   let h = '<table><tr>' + cols.map(c => '<th>' + c + '</th>').join('') + '</tr>';
@@ -810,6 +870,21 @@ document.getElementById('hd-caption').textContent =
       '<td>' + pc(s.p_dd50, 2) + '</td></tr>';
   }
   document.getElementById('scen-table').innerHTML = h + '</table>';
+}
+
+// ---------------- strategy switcher ----------------
+function renderAll() { renderHeader(); renderFan(); renderHists(); renderRisk(); renderScen(); }
+function activate(key) {
+  D = ALL.strategies.find(s => s.key === key) || ALL.strategies[0];
+  P = D.params; renderAll();
+}
+(function initStrat() {
+  const sel = document.getElementById('strat');
+  sel.innerHTML = ALL.strategies.map(s =>
+    '<option value="' + s.key + '">' + s.label + '</option>').join('');
+  sel.value = ALL.active;
+  sel.addEventListener('change', () => activate(sel.value));
+  activate(sel.value);
 })();
 
 // ---------------- Birdeye meter (app chrome, shared with / and /trades) ----------------

@@ -23,7 +23,6 @@ import bdusage
 import blcards
 import walletpage
 from backtest import BLOCKLIST_PATH, MANUAL_BLOCKLIST_PATH
-from bot import birdeye_ws  # state_paths(): one candle store per strategy
 from bot import jupiter
 from bot import wallets as botwallets
 from bot.config import Config, LAMPORTS_PER_SOL
@@ -334,6 +333,21 @@ def asym_backtest():
 # Live paper strategies. base is the main-tree asym trial; bounce/holder run
 # from the parallel worktree with --workdir=ROOT, so their dbs/logs land here.
 WORKTREE = os.path.join(ROOT, ".claude", "worktrees", "paper-bounce-holder")
+def _ws_state_path(strategy: str) -> str:
+    """Per-strategy candle snapshot. Prefers bot.birdeye_ws.state_paths() so
+    there is one definition of the naming rule, but falls back to the rule
+    itself: the dashboard is often run from a checkout whose bot/ predates
+    multi-strategy support, and a missing helper should cost the strategy badge
+    nothing - it must not take the whole page down on import."""
+    try:
+        from bot import birdeye_ws
+        return birdeye_ws.state_paths(strategy)[1]
+    except (ImportError, AttributeError):
+        if strategy == "base":
+            return WS_STATE_PATH
+        return os.path.join("reports", f"ws_state-{strategy}.json")
+
+
 def _find_cfg(name: str) -> str:
     """Repo root first, then the parallel worktree. bounce/holder were authored
     in the worktree, but merging that branch puts them at the root - resolving
@@ -577,10 +591,10 @@ def build_state() -> dict:
         if dbp in seen_dbs or not os.path.exists(dbp):
             continue
         seen_dbs.add(dbp)
-        _, state_path = birdeye_ws.state_paths(getattr(scfg, "strategy", "base"))
+        state_path = _ws_state_path(getattr(scfg, "strategy", "base"))
         open_sources.append((label, Portfolio(scfg.db_path, scfg.mode), state_path))
     if os.path.abspath(cfg.db_path) not in seen_dbs:
-        _, state_path = birdeye_ws.state_paths(getattr(cfg, "strategy", "base"))
+        state_path = _ws_state_path(getattr(cfg, "strategy", "base"))
         open_sources.append((getattr(cfg, "strategy", "base").upper(), db, state_path))
 
     open_out = []
