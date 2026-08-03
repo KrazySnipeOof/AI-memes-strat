@@ -38,6 +38,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import backtest
+import mtest
 from bot.config import Config
 from sweep import FAIR_COHORTS, token_bucket, stats, load_cached_candles, load_tokens
 
@@ -233,10 +234,13 @@ def main() -> None:
     for r in sorted(results, key=lambda r: -r["train"]["wr"])[:10]:
         show(r)
 
+    haircut = mtest.print_haircut(results, half="train", attempted=total,
+                                  min_n=args.min_train)
+
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as fh:
         json.dump({"n_combos": total, "n_scored": len(results),
-                   "hitters": hitters, "all": results}, fh, indent=1)
+                   "mtest": haircut, "hitters": hitters, "all": results}, fh, indent=1)
     print(f"\nfull results: {os.path.abspath(args.out)}")
 
 

@@ -23,12 +23,12 @@ import hashlib
 import itertools
 import json
 import os
-import statistics
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import backtest
+import mtest
 from bot.config import Config
 
 FAIR_COHORTS = {"db", "pump", "new"}
@@ -52,15 +52,13 @@ def load_tokens(args, cfg):
 
 
 def stats(mults):
-    if not mults:
-        return None
-    wins = sum(1 for m in mults if m > 1.0)
-    return {
-        "n": len(mults),
-        "wr": 100.0 * wins / len(mults),
-        "avg": statistics.mean(mults),
-        "median": statistics.median(mults),
-    }
+    """n/wr/avg/median as always, plus std/skew/kurt.
+
+    The extra moments are what mtest.py needs to deflate a best-of-N
+    leaderboard; every sweep that imports this function gets them for free.
+    Purely additive - existing readers of n/wr/avg/median are unaffected.
+    """
+    return mtest.moments(mults)
 
 
 def main() -> None:
@@ -186,10 +184,13 @@ def main() -> None:
     for r in sorted(results, key=lambda r: -r["train"]["wr"])[:10]:
         show(r)
 
+    haircut = mtest.print_haircut(results, half="train", attempted=len(combos),
+                                  min_n=args.min_train)
+
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as fh:
         json.dump({"n_combos": len(combos), "n_scored": len(results),
-                   "hitters": hitters, "all": results}, fh, indent=1)
+                   "mtest": haircut, "hitters": hitters, "all": results}, fh, indent=1)
     print(f"\nfull results: {os.path.abspath(args.out)}")
 
 

@@ -38,6 +38,7 @@ from collections import deque
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import backtest
+import mtest
 from loop8_eval import sim, wr_avg          # engine v5 + stats, verbatim
 from sweep import token_bucket
 
@@ -182,12 +183,16 @@ def main() -> None:
                             if len(mults) < 30:
                                 continue
                             a, w, n = wr_avg(mults)
+                            m = mtest.moments(mults)  # std/skew/kurt for the haircut
                             rows.append({"ent": ent, "ex": ex, "avg": round(a, 4),
                                          "wr": round(w, 1), "n": n,
-                                         "med": round(statistics.median(mults), 3)})
+                                         "med": round(statistics.median(mults), 3),
+                                         "std": m["std"], "skew": m["skew"],
+                                         "kurt": m["kurt"]})
                         done = f"{uni} r{ratio} w{window} nk{nk}: {len(entries)} entries"
                         print(done, flush=True)
         rows.sort(key=lambda r: -r["avg"])
+        mtest.print_haircut(rows, half="pooled", attempted=len(rows))
         os.makedirs("reports", exist_ok=True)
         with open(os.path.join("reports", "volmc_train.json"), "w", encoding="utf-8") as f:
             json.dump(rows, f, indent=1)

@@ -25,6 +25,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import backtest
+import mtest
 from sweep import FAIR_COHORTS, token_bucket, stats
 from sweep3 import entry_features, passes, simulate3, exits_from
 
@@ -140,10 +141,14 @@ def main() -> None:
     for r in sorted(ok, key=lambda r: -min(r["train"]["avg"], r["valid"]["avg"]))[:15]:
         show(r)
 
+    haircut = mtest.print_haircut(results, half="train", min_n=args.min_train,
+                                  attempted=len(entry_combos) * len(exit_combos))
+
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as fh:
         json.dump({"engine": "v3+ext", "min_fill_vol": args.min_fill_vol,
-                   "n_scored": len(results), "hitters": hitters, "all": results},
+                   "n_scored": len(results), "mtest": haircut,
+                   "hitters": hitters, "all": results},
                   fh, indent=1)
     print(f"\nfull results: {os.path.abspath(args.out)}")
 
